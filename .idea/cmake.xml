@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeSharedSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug-USBYork" ENABLED="true" CONFIG_NAME="Debug" TOOLCHAIN_NAME="Default" GENERATION_OPTIONS="--preset usb-local" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="Release-USBYork" ENABLED="true" CONFIG_NAME="Release" TOOLCHAIN_NAME="Default" GENERATION_OPTIONS="--preset usb-local" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="Debug-Viking" ENABLED="true" CONFIG_NAME="Debug" TOOLCHAIN_NAME="Viking Tunnel" GENERATION_OPTIONS="--preset viking" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="Release-Viking" ENABLED="true" CONFIG_NAME="Release" TOOLCHAIN_NAME="Viking Tunnel" GENERATION_OPTIONS="--preset viking" NO_GENERATOR="true" />
+    </configurations>
+  </component>
+</project>

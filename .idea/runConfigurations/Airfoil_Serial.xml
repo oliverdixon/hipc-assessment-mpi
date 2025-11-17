@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Airfoil_Serial" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-x 512 -y 128 -c" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/Airfoil_Serial" PASS_PARENT_ENVS_2="true" PROJECT_NAME="HIPC_Assessment" TARGET_NAME="Airfoil_Serial" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="HIPC_Assessment" RUN_TARGET_NAME="Airfoil_Serial">
+  <configuration default="false" name="Airfoil_Serial" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-x 512 -y 128 -c" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/Airfoil_Serial" PASS_PARENT_ENVS_2="true" PROJECT_NAME="HIPC_Assessment" TARGET_NAME="Airfoil_Serial" CONFIG_NAME="Debug-Viking" RUN_TARGET_PROJECT_NAME="HIPC_Assessment" RUN_TARGET_NAME="Airfoil_Serial">
     <method v="2">
       <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
     </method>
