@@ -46,11 +46,7 @@ void free_arrays()
  */
 void problem_set_up()
 {
-    /*
-     * Initialise all cells with defined initial parameters:
-     *
-     * 1. Initial
-     */
+    // Initialise all cells' information matrices with defined initial parameters.
 
     for (int h_cell_idx = 0; h_cell_idx < h_cell_count + 2; ++h_cell_idx) {
         for (int v_cell_idx = 0; v_cell_idx < v_cell_count + 2; ++v_cell_idx) {
@@ -136,9 +132,9 @@ void problem_set_up()
     }
 
     // Mark the extreme east and west boundary cells
-    for (int v_celL_idx = 1; v_celL_idx <= v_cell_count; ++v_celL_idx) {
-        flags[0][v_celL_idx] = CELL_BOUNDARY;
-        flags[h_cell_count + 1][v_celL_idx] = CELL_BOUNDARY;
+    for (int v_cell_idx = 1; v_cell_idx <= v_cell_count; ++v_cell_idx) {
+        flags[0][v_cell_idx] = CELL_BOUNDARY;
+        flags[h_cell_count + 1][v_cell_idx] = CELL_BOUNDARY;
     }
 
     fluid_cell_count = h_cell_count * v_cell_count;

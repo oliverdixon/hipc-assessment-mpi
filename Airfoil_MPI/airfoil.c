@@ -6,19 +6,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "airfoil.h"
+#include "region.h"
 
 int main(int argc, char ** argv)
 {
     MPI_Init(&argc, &argv);
 
-    int slot_id;
-    int slot_count;
+    const struct instance instance = instance_create();
+    const struct region region = region_create(&instance);
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &slot_id);
-    MPI_Comm_size(MPI_COMM_WORLD, &slot_count);
+    instance_describe(&instance, stderr);
+    region_describe(&region, stderr);
+    region_initialise(&region, &instance);
 
-    printf("Slot %d out of %d.\n", slot_id + 1, slot_count);
+    char filename[16];
+    snprintf(filename, 16, "out/%2d", instance.rank);
+    FILE * fp = fopen(filename, "w");
+    region_print(&region, fp);
+    fclose(fp);
+
+    region_destroy(&region);
 
     MPI_Finalize();
     return EXIT_SUCCESS;
