@@ -54,8 +54,8 @@ void problem_set_up()
 
     for (int h_cell_idx = 0; h_cell_idx < h_cell_count + 2; ++h_cell_idx) {
         for (int v_cell_idx = 0; v_cell_idx < v_cell_count + 2; ++v_cell_idx) {
-            velocity_x[h_cell_idx][v_cell_idx] = ui;
-            velocity_y[h_cell_idx][v_cell_idx] = vi;
+            velocity_x[h_cell_idx][v_cell_idx] = initial_x_vel;
+            velocity_y[h_cell_idx][v_cell_idx] = initial_y_vel;
             pressure[h_cell_idx][v_cell_idx] = 0.0;
             flags[h_cell_idx][v_cell_idx] = CELL_FLUID;
         }

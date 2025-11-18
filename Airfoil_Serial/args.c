@@ -83,7 +83,7 @@ void parse_args(int argc, char *argv[])
             break;
         case 'd':
             fixed_dt = 1;
-            del_t = atof(optarg);
+            timestep_duration = atof(optarg);
             break;
         case 'f':
             output_freq = atoi(optarg);
@@ -121,7 +121,7 @@ void print_opts()
     printf("  cellx            = %14d\n", h_cell_count);
     printf("  celly            = %14d\n", v_cell_count);
     printf("  endtime          = %14.12lf\n", t_end);
-    printf("  del-t            = %14lf\n", del_t);
+    printf("  del-t            = %14lf\n", timestep_duration);
     printf("  freq             = %14d\n", output_freq);
     printf("  noio             = %14d\n", no_output);
     printf("  output           = %s\n", get_basename());

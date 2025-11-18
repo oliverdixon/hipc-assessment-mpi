@@ -35,16 +35,16 @@ extern int h_cell_count; /* Number of cells horizontally */
 extern int v_cell_count; /* Number of cells vertically */
 
 extern double t_end; /* Simulation runtime */
-extern double del_t; /* Duration of each timestep */
+extern double timestep_duration; /* Duration of each timestep */
 extern double tau; /* Safety factor for timestep control */
 
-extern double Re; /* Reynolds number */
-extern double ui; /* Initial X velocity */
-extern double vi; /* Initial Y velocity */
+extern double reynolds; /* Reynolds number */
+extern double initial_x_vel; /* Initial X velocity */
+extern double initial_y_vel; /* Initial Y velocity */
 
 extern int fluid_cell_count;
 
-extern double delx, dely;
+extern double x_grid_spacing, y_grid_spacing;
 
 extern double **velocity_x;
 extern double **velocity_y;

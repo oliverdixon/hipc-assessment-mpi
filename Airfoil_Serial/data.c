@@ -16,14 +16,14 @@ struct naca_specifier naca_specifier =
 };
 
 double t_end = 2.0; /* Simulation runtime */
-double del_t = 0.003; /* Duration of each timestep */
-double tau = 0.5; /* Safety factor for timestep control */
+double timestep_duration = 0.003; /* Duration of each timestep */
 
-double Re = 500.0; /* Reynolds number */
-double ui = 1.0; /* Initial X velocity */
-double vi = 0.0; /* Initial Y velocity */
+double reynolds = 500.0;
+double initial_x_vel = 1.0;
+double initial_y_vel = 0.0;
 
-double delx, dely;
+double x_grid_spacing;
+double y_grid_spacing;
 
 int fluid_cell_count = 0;
 
