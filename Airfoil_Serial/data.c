@@ -19,72 +19,61 @@ double t_end = 2.0; /* Simulation runtime */
 double del_t = 0.003; /* Duration of each timestep */
 double tau = 0.5; /* Safety factor for timestep control */
 
-int itermax = 100; /* Maximum number of iterations in SOR */
-double eps = 0.001; /* Stopping error threshold for SOR */
-double omega = 1.7; /* Relaxation parameter for SOR */
-double y = 0.9; /* Gamma, Upwind differencing factor in PDE discretisation */
-
 double Re = 500.0; /* Reynolds number */
 double ui = 1.0; /* Initial X velocity */
 double vi = 0.0; /* Initial Y velocity */
 
 double delx, dely;
 
-int fluid_cells = 0;
+int fluid_cell_count = 0;
 
-// Grids used for veclocities, pressure, rhs, flag and temporary f and g arrays
-int u_size_x, u_size_y;
-double **u;
-int v_size_x, v_size_y;
-double **v;
-int p_size_x, p_size_y;
-double **p;
-int rhs_size_x, rhs_size_y;
-double **rhs;
-int f_size_x, f_size_y;
-double **f;
-int g_size_x, g_size_y;
-double **g;
-int flag_size_x, flag_size_y;
-char **flag;
+double **velocity_x;
+double **velocity_y;
+double **pressure;
+double **poisson_source;
+double **tentative_velocity_x;
+double **tentative_velocity_y;
+char **flags;
 
 /**
  * @brief Allocate a 2D array that is addressable using square brackets
  *
- * @param m The first dimension of the array
- * @param n The second dimension of the array
+ * @param column_count The first dimension of the array
+ * @param row_count The second dimension of the array
  * @return double** A 2D array
  */
-double **alloc_2d_array(int m, int n)
+double **alloc_2d_array(const int column_count, const int row_count)
 {
-    double **x;
-    int i;
+    double **array;
 
-    x = (double **) malloc(m * sizeof(double *));
-    x[0] = (double *) calloc(m * n, sizeof(double));
-    for (i = 1; i < m; i++)
-        x[i] = &x[0][i * n];
-    return x;
+    array = (double **) malloc(column_count * sizeof(double *));
+    array[0] = (double *) calloc(column_count * row_count, sizeof(double));
+
+    for (int column_idx = 1; column_idx < column_count; ++column_idx)
+        array[column_idx] = &array[0][column_idx * row_count];
+
+    return array;
 }
 
 
 /**
  * @brief Allocate a 2D char array that is addressable using square brackets
  *
- * @param m The first dimension of the array
- * @param n The second dimension of the array
+ * @param column_count The first dimension of the array
+ * @param row_count The second dimension of the array
  * @return char** A 2D array
  */
-char **alloc_2d_char_array(int m, int n)
+char **alloc_2d_char_array(const int column_count, const int row_count)
 {
-    char **x;
-    int i;
+    char **array;
 
-    x = (char **) malloc(m * sizeof(char *));
-    x[0] = (char *) calloc(m * n, sizeof(char));
-    for (i = 1; i < m; i++)
-        x[i] = &x[0][i * n];
-    return x;
+    array = (char **) malloc(column_count * sizeof(char *));
+    array[0] = (char *) calloc(column_count * row_count, sizeof(char));
+
+    for (int column_idx = 1; column_idx < column_count; ++column_idx)
+        array[column_idx] = &array[0][column_idx * row_count];
+
+    return array;
 }
 
 /**

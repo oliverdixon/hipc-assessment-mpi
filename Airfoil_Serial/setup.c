@@ -2,28 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "boundary.h"
 #include "data.h"
-#include "vtk.h"
-
-/**
- * @brief Set up some default values before arguments are parsed.
- *
- */
-void set_defaults()
-{
-    set_default_base();
-}
-
-/**
- * @brief Set up some values after arguments have been parsed.
- *
- */
-void setup()
-{
-    delx = problem_space_width / h_cell_count;
-    dely = problem_space_height / v_cell_count;
-}
 
 /**
  * @brief Allocate all of the arrays used by the computation.
@@ -31,30 +10,15 @@ void setup()
  */
 void allocate_arrays()
 {
-    /* Allocate arrays */
-    u_size_x = h_cell_count + 2;
-    u_size_y = v_cell_count + 2;
-    u = alloc_2d_array(u_size_x, u_size_y);
-    v_size_x = h_cell_count + 2;
-    v_size_y = v_cell_count + 2;
-    v = alloc_2d_array(v_size_x, v_size_y);
-    f_size_x = h_cell_count + 2;
-    f_size_y = v_cell_count + 2;
-    f = alloc_2d_array(f_size_x, f_size_y);
-    g_size_x = h_cell_count + 2;
-    g_size_y = v_cell_count + 2;
-    g = alloc_2d_array(g_size_x, g_size_y);
-    p_size_x = h_cell_count + 2;
-    p_size_y = v_cell_count + 2;
-    p = alloc_2d_array(p_size_x, p_size_y);
-    rhs_size_x = h_cell_count + 2;
-    rhs_size_y = v_cell_count + 2;
-    rhs = alloc_2d_array(rhs_size_x, rhs_size_y);
-    flag_size_x = h_cell_count + 2;
-    flag_size_y = v_cell_count + 2;
-    flag = alloc_2d_char_array(flag_size_x, flag_size_y);
+    velocity_x = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    velocity_y = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    tentative_velocity_x = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    tentative_velocity_y = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    pressure = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    poisson_source = alloc_2d_array(h_cell_count + 2, v_cell_count + 2);
+    flags = alloc_2d_char_array(h_cell_count + 2, v_cell_count + 2);
 
-    if (!u || !v || !f || !g || !p || !rhs || !flag) {
+    if (!velocity_x || !velocity_y || !tentative_velocity_x || !tentative_velocity_y || !pressure || !poisson_source || !flags) {
         fprintf(stderr, "Couldn't allocate memory for matrices.\n");
         exit(1);
     }
@@ -66,13 +30,13 @@ void allocate_arrays()
  */
 void free_arrays()
 {
-    free_2d_array((void **) u);
-    free_2d_array((void **) v);
-    free_2d_array((void **) f);
-    free_2d_array((void **) g);
-    free_2d_array((void **) p);
-    free_2d_array((void **) rhs);
-    free_2d_array((void **) flag);
+    free_2d_array((void **) velocity_x);
+    free_2d_array((void **) velocity_y);
+    free_2d_array((void **) tentative_velocity_x);
+    free_2d_array((void **) tentative_velocity_y);
+    free_2d_array((void **) pressure);
+    free_2d_array((void **) poisson_source);
+    free_2d_array((void **) flags);
 }
 
 /**
@@ -82,12 +46,18 @@ void free_arrays()
  */
 void problem_set_up()
 {
-    for (int i = 0; i < h_cell_count + 2; i++) {
-        for (int j = 0; j < v_cell_count + 2; j++) {
-            u[i][j] = ui;
-            v[i][j] = vi;
-            p[i][j] = 0.0;
-            flag[i][j] = CELL_FLUID;
+    /*
+     * Initialise all cells with defined initial parameters:
+     *
+     * 1. Initial
+     */
+
+    for (int h_cell_idx = 0; h_cell_idx < h_cell_count + 2; ++h_cell_idx) {
+        for (int v_cell_idx = 0; v_cell_idx < v_cell_count + 2; ++v_cell_idx) {
+            velocity_x[h_cell_idx][v_cell_idx] = ui;
+            velocity_y[h_cell_idx][v_cell_idx] = vi;
+            pressure[h_cell_idx][v_cell_idx] = 0.0;
+            flags[h_cell_idx][v_cell_idx] = CELL_FLUID;
         }
     }
 
@@ -95,14 +65,16 @@ void problem_set_up()
      * Mark the airfoil obstacle outline as boundary cells, and the rest as fluid.
      *
      * 1. Scale the NACA airfoil parameters by constants. This function supports cambered airfoils.
-     * 2. Scanning left-to-right along the horizontal axis,
+     * 2. Scanning left-to-right along the horizontal axis, compute the camber lines for the upper and lower portions of
+     *    the airfoil.
+     * 3. Mark airfoil outline boundaries in the 'flags' matrix.
      */
 
     const double maximum_camber = naca_specifier.maximum_camber / 100.0;
     const double edge_distance = naca_specifier.edge_distance / 10.0;
     const double thickness = naca_specifier.maximum_thickness / 100.0;
 
-    for (int h_cell_idx = 1; h_cell_idx <= h_cell_count; h_cell_idx++) {
+    for (int h_cell_idx = 1; h_cell_idx <= h_cell_count; ++h_cell_idx) {
         /*
          * Normalise the current cell index to provide the position along the chord. If it lies beyond [0, 1], it is
          * outside of the problem space and we're not interested.
@@ -154,37 +126,35 @@ void problem_set_up()
             vertical_scaler);
 
         for (unsigned int v_cell_idx = v_idx_start; v_cell_idx < v_idx_end; v_cell_idx++)
-            flag[h_cell_idx][v_cell_idx] = CELL_BOUNDARY;
+            flags[h_cell_idx][v_cell_idx] = CELL_BOUNDARY;
     }
 
     // Mark the extreme north and south boundary cells
-    for (int i = 0; i <= h_cell_count + 1; i++) {
-        flag[i][0] = CELL_BOUNDARY;
-        flag[i][v_cell_count + 1] = CELL_BOUNDARY;
+    for (int h_cell_idx = 0; h_cell_idx <= h_cell_count + 1; ++h_cell_idx) {
+        flags[h_cell_idx][0] = CELL_BOUNDARY;
+        flags[h_cell_idx][v_cell_count + 1] = CELL_BOUNDARY;
     }
 
     // Mark the extreme east and west boundary cells
-    for (int j = 1; j <= v_cell_count; j++) {
-        flag[0][j] = CELL_BOUNDARY;
-        flag[h_cell_count + 1][j] = CELL_BOUNDARY;
+    for (int v_celL_idx = 1; v_celL_idx <= v_cell_count; ++v_celL_idx) {
+        flags[0][v_celL_idx] = CELL_BOUNDARY;
+        flags[h_cell_count + 1][v_celL_idx] = CELL_BOUNDARY;
     }
 
-    fluid_cells = h_cell_count * v_cell_count;
+    fluid_cell_count = h_cell_count * v_cell_count;
 
     // Mask in additional directional indicator flags for non-fluid cells, describing presence of nearby fluid cells.
-    for (int i = 1; i <= h_cell_count; i++)
-        for (int j = 1; j <= v_cell_count; j++)
-            if (!(flag[i][j] & CELL_FLUID)) {
-                --fluid_cells;
-                if (flag[i - 1][j] & CELL_FLUID)
-                    flag[i][j] |= CELL_FLUID_WEST;
-                if (flag[i + 1][j] & CELL_FLUID)
-                    flag[i][j] |= CELL_FLUID_EAST;
-                if (flag[i][j - 1] & CELL_FLUID)
-                    flag[i][j] |= CELL_FLUID_SOUTH;
-                if (flag[i][j + 1] & CELL_FLUID)
-                    flag[i][j] |= CELL_FLUID_NORTH;
+    for (int h_cell_idx = 1; h_cell_idx <= h_cell_count; ++h_cell_idx)
+        for (int v_cell_idx = 1; v_cell_idx <= v_cell_count; ++v_cell_idx)
+            if (!(flags[h_cell_idx][v_cell_idx] & CELL_FLUID)) {
+                --fluid_cell_count;
+                if (flags[h_cell_idx - 1][v_cell_idx] & CELL_FLUID)
+                    flags[h_cell_idx][v_cell_idx] |= CELL_FLUID_WEST;
+                if (flags[h_cell_idx + 1][v_cell_idx] & CELL_FLUID)
+                    flags[h_cell_idx][v_cell_idx] |= CELL_FLUID_EAST;
+                if (flags[h_cell_idx][v_cell_idx - 1] & CELL_FLUID)
+                    flags[h_cell_idx][v_cell_idx] |= CELL_FLUID_SOUTH;
+                if (flags[h_cell_idx][v_cell_idx + 1] & CELL_FLUID)
+                    flags[h_cell_idx][v_cell_idx] |= CELL_FLUID_NORTH;
             }
-
-    apply_boundary_conditions();
 }

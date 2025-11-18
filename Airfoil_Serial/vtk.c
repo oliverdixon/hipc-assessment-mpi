@@ -8,67 +8,12 @@ char checkpoint_basename[1024];
 char result_filename[1024];
 
 /**
- * @brief Set the default basename for file output to out/airfoil
- *
- */
-void set_default_base()
-{
-    set_basename("out/airfoil");
-}
-
-/**
- * @brief Set the basename for file output
- *
- * @param base Basename string
- */
-void set_basename(char *base)
-{
-    checkpoint_basename[0] = '\0';
-    result_filename[0] = '\0';
-    sprintf(checkpoint_basename, "%s-%%d.vtr", base);
-    sprintf(result_filename, "%s.vtr", base);
-}
-
-/**
- * @brief Get the basename for file output
- *
- * @return char* Basename string
- */
-char *get_basename()
-{
-    return checkpoint_basename;
-}
-
-/**
- * @brief Write a checkpoint VTK file (with the iteration number in the filename)
- *
- * @param iteration The current iteration number
- * @return int Return whether the write was successful
- */
-int write_checkpoint(int iters, double t)
-{
-    char filename[1024];
-    sprintf(filename, checkpoint_basename, iters);
-    return write_vtk(filename, iters, t);
-}
-
-/**
- * @brief Write the final output to a VTK file
- *
- * @return int Return whether the write was successful
- */
-int write_result(int iters, double t)
-{
-    return write_vtk(result_filename, iters, t);
-}
-
-/**
  * @brief Write a VTK file with the current state of the simulation
  *
  * @param filename The filename to write out
  * @return int Return whether the write was successful
  */
-int write_vtk(char *filename, int iters, double t)
+static int write_vtk(const char *filename, const int iters, const double t)
 {
     FILE *f = fopen(filename, "w");
     if (f == NULL) {
@@ -107,7 +52,7 @@ int write_vtk(char *filename, int iters, double t)
     fprintf(f, "<DataArray type=\"Float64\" Name=\"uv\" NumberOfComponents=\"3\" format=\"ascii\">\n");
     for (int j = 0; j < v_cell_count + 2; j++)
         for (int i = 0; i < h_cell_count + 2; i++)
-            fprintf(f, "%.12e %.12e 0\n", u[i][j], v[i][j]);
+            fprintf(f, "%.12e %.12e 0\n", velocity_x[i][j], velocity_y[i][j]);
     fprintf(f, "</DataArray>\n");
     fprintf(f, "</PointData>\n");
 
@@ -115,7 +60,7 @@ int write_vtk(char *filename, int iters, double t)
     fprintf(f, "<DataArray type=\"Float64\" Name=\"p\" format=\"ascii\">\n");
     for (int j = 0; j < v_cell_count + 2; j++) {
         for (int i = 0; i < h_cell_count + 2; i++)
-            fprintf(f, "%.12e ", p[i][j]);
+            fprintf(f, "%.12e ", pressure[i][j]);
         fprintf(f, "\n");
     }
     fprintf(f, "</DataArray>\n");
@@ -127,4 +72,58 @@ int write_vtk(char *filename, int iters, double t)
 
     fclose(f);
     return 0;
+}
+
+/**
+ * @brief Set the default basename for file output to out/airfoil
+ *
+ */
+void set_default_base()
+{
+    set_basename("out/airfoil");
+}
+
+/**
+ * @brief Set the basename for file output
+ *
+ * @param base Basename string
+ */
+void set_basename(const char *const base)
+{
+    checkpoint_basename[0] = '\0';
+    result_filename[0] = '\0';
+    sprintf(checkpoint_basename, "%s-%%d.vtr", base);
+    sprintf(result_filename, "%s.vtr", base);
+}
+
+/**
+ * @brief Get the basename for file output
+ *
+ * @return char* Basename string
+ */
+char *get_basename()
+{
+    return checkpoint_basename;
+}
+
+/**
+ * @brief Write a checkpoint VTK file (with the iteration number in the filename)
+ * @param iters The current iteration number
+ * @return int Return whether the write was successful
+ */
+int write_checkpoint(const int iters, double t)
+{
+    char filename[1024];
+    sprintf(filename, checkpoint_basename, iters);
+    return write_vtk(filename, iters, t);
+}
+
+/**
+ * @brief Write the final output to a VTK file
+ *
+ * @return int Return whether the write was successful
+ */
+int write_result(const int iters, const double t)
+{
+    return write_vtk(result_filename, iters, t);
 }
