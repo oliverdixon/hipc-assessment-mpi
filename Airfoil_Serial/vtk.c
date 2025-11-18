@@ -78,7 +78,7 @@ int write_vtk(char *filename, int iters, double t)
 
     fprintf(f, "<?xml version=\"1.0\"?>\n");
     fprintf(f, "<VTKFile type=\"RectilinearGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n");
-    fprintf(f, "<RectilinearGrid WholeExtent=\"0 %d 0 %d 0 0\">\n", imax + 1, jmax + 1);
+    fprintf(f, "<RectilinearGrid WholeExtent=\"0 %d 0 %d 0 0\">\n", h_cell_count + 1, v_cell_count + 1);
     fprintf(f, "<FieldData>\n");
     fprintf(f, "<DataArray type=\"Float64\" Name=\"TIME\" NumberOfTuples=\"1\" format=\"ascii\">\n");
     fprintf(f, "%.12e\n", t);
@@ -87,16 +87,16 @@ int write_vtk(char *filename, int iters, double t)
     fprintf(f, "%d\n", iters);
     fprintf(f, "</DataArray>\n");
     fprintf(f, "</FieldData>\n");
-    fprintf(f, "<Piece Extent=\"0 %d 0 %d 0 0\">\n", imax + 1, jmax + 1);
+    fprintf(f, "<Piece Extent=\"0 %d 0 %d 0 0\">\n", h_cell_count + 1, v_cell_count + 1);
 
     fprintf(f, "<Coordinates>\n");
-    fprintf(f, "<DataArray type=\"Float64\" Name=\"X\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n", xlength);
-    for (int i = 0; i < imax + 2; i++)
-        fprintf(f, "%lf ", ((xlength / (imax + 1)) * i));
+    fprintf(f, "<DataArray type=\"Float64\" Name=\"X\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n", problem_space_width);
+    for (int i = 0; i < h_cell_count + 2; i++)
+        fprintf(f, "%lf ", ((problem_space_width / (h_cell_count + 1)) * i));
     fprintf(f, "\n</DataArray>\n");
-    fprintf(f, "<DataArray type=\"Float64\" Name=\"Y\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n", ylength);
-    for (int j = 0; j < jmax + 2; j++)
-        fprintf(f, "%lf ", ((ylength / (jmax + 1)) * j));
+    fprintf(f, "<DataArray type=\"Float64\" Name=\"Y\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n", problem_space_height);
+    for (int j = 0; j < v_cell_count + 2; j++)
+        fprintf(f, "%lf ", ((problem_space_height / (v_cell_count + 1)) * j));
     fprintf(f, "\n</DataArray>\n");
     fprintf(f, "<DataArray type=\"Float64\" Name=\"Z\" format=\"ascii\">\n");
     fprintf(f, "0.0\n");
@@ -105,16 +105,16 @@ int write_vtk(char *filename, int iters, double t)
 
     fprintf(f, "<PointData Vectors=\"uv\">\n");
     fprintf(f, "<DataArray type=\"Float64\" Name=\"uv\" NumberOfComponents=\"3\" format=\"ascii\">\n");
-    for (int j = 0; j < jmax + 2; j++)
-        for (int i = 0; i < imax + 2; i++)
+    for (int j = 0; j < v_cell_count + 2; j++)
+        for (int i = 0; i < h_cell_count + 2; i++)
             fprintf(f, "%.12e %.12e 0\n", u[i][j], v[i][j]);
     fprintf(f, "</DataArray>\n");
     fprintf(f, "</PointData>\n");
 
     fprintf(f, "<CellData Scalars=\"p\">\n");
     fprintf(f, "<DataArray type=\"Float64\" Name=\"p\" format=\"ascii\">\n");
-    for (int j = 0; j < jmax + 2; j++) {
-        for (int i = 0; i < imax + 2; i++)
+    for (int j = 0; j < v_cell_count + 2; j++) {
+        for (int i = 0; i < h_cell_count + 2; i++)
             fprintf(f, "%.12e ", p[i][j]);
         fprintf(f, "\n");
     }

@@ -13,10 +13,10 @@
  */
 void compute_tentative_velocity()
 {
-    for (int i = 1; i < imax; i++) {
-        for (int j = 1; j < jmax + 1; j++) {
+    for (int i = 1; i < h_cell_count; i++) {
+        for (int j = 1; j < v_cell_count + 1; j++) {
             /* only if both adjacent cells are fluid cells */
-            if ((flag[i][j] & C_F) && (flag[i + 1][j] & C_F)) {
+            if ((flag[i][j] & CELL_FLUID) && (flag[i + 1][j] & CELL_FLUID)) {
                 double du2dx = ((u[i][j] + u[i + 1][j]) * (u[i][j] + u[i + 1][j]) +
                                        y * fabs(u[i][j] + u[i + 1][j]) * (u[i][j] - u[i + 1][j]) -
                                        (u[i - 1][j] + u[i][j]) * (u[i - 1][j] + u[i][j]) -
@@ -36,10 +36,11 @@ void compute_tentative_velocity()
             }
         }
     }
-    for (int i = 1; i < imax + 1; i++) {
-        for (int j = 1; j < jmax; j++) {
+
+    for (int i = 1; i < h_cell_count + 1; i++) {
+        for (int j = 1; j < v_cell_count; j++) {
             /* only if both adjacent cells are fluid cells */
-            if ((flag[i][j] & C_F) && (flag[i][j + 1] & C_F)) {
+            if ((flag[i][j] & CELL_FLUID) && (flag[i][j + 1] & CELL_FLUID)) {
                 double duvdx = ((u[i][j] + u[i][j + 1]) * (v[i][j] + v[i + 1][j]) +
                                        y * fabs(u[i][j] + u[i][j + 1]) * (v[i][j] - v[i + 1][j]) -
                                        (u[i - 1][j] + u[i - 1][j + 1]) * (v[i - 1][j] + v[i][j]) -
@@ -61,13 +62,13 @@ void compute_tentative_velocity()
     }
 
     /* f & g at external boundaries */
-    for (int j = 1; j < jmax + 1; j++) {
+    for (int j = 1; j < v_cell_count + 1; j++) {
         f[0][j] = u[0][j];
-        f[imax][j] = u[imax][j];
+        f[h_cell_count][j] = u[h_cell_count][j];
     }
-    for (int i = 1; i < imax + 1; i++) {
+    for (int i = 1; i < h_cell_count + 1; i++) {
         g[i][0] = v[i][0];
-        g[i][jmax] = v[i][jmax];
+        g[i][v_cell_count] = v[i][v_cell_count];
     }
 }
 
@@ -78,9 +79,9 @@ void compute_tentative_velocity()
  */
 void compute_rhs()
 {
-    for (int i = 1; i < imax + 1; i++) {
-        for (int j = 1; j < jmax + 1; j++) {
-            if (flag[i][j] & C_F) {
+    for (int i = 1; i < h_cell_count + 1; i++) {
+        for (int j = 1; j < v_cell_count + 1; j++) {
+            if (flag[i][j] & CELL_FLUID) {
                 /* only for fluid and non-surface cells */
                 rhs[i][j] = ((f[i][j] - f[i - 1][j]) / delx + (g[i][j] - g[i][j - 1]) / dely) / del_t;
             }
@@ -103,9 +104,9 @@ double poisson()
 
     double p0 = 0.0;
     /* Calculate sum of squares */
-    for (int i = 1; i < imax + 1; i++) {
-        for (int j = 1; j < jmax + 1; j++) {
-            if (flag[i][j] & C_F) {
+    for (int i = 1; i < h_cell_count + 1; i++) {
+        for (int j = 1; j < v_cell_count + 1; j++) {
+            if (flag[i][j] & CELL_FLUID) {
                 p0 += p[i][j] * p[i][j];
             }
         }
@@ -120,24 +121,24 @@ double poisson()
     double res = 0.0;
     for (int iter = 0; iter < itermax; iter++) {
         for (int rb = 0; rb < 2; rb++) {
-            for (int i = 1; i < imax + 1; i++) {
-                for (int j = 1; j < jmax + 1; j++) {
+            for (int i = 1; i < h_cell_count + 1; i++) {
+                for (int j = 1; j < v_cell_count + 1; j++) {
                     if ((i + j) % 2 != rb) {
                         continue;
                     }
-                    if (flag[i][j] == (C_F | B_NSEW)) {
+                    if (flag[i][j] == (CELL_FLUID | CELL_FLUID_ALL)) {
                         /* five point star for interior fluid cells */
                         p[i][j] = (1.0 - omega) * p[i][j] -
                                 beta_2 *
                                         ((p[i + 1][j] + p[i - 1][j]) * rdx2 + (p[i][j + 1] + p[i][j - 1]) * rdy2 -
                                                 rhs[i][j]);
-                    } else if (flag[i][j] & C_F) {
+                    } else if (flag[i][j] & CELL_FLUID) {
                         /* modified star near boundary */
 
-                        double eps_E = flag[i + 1][j] & C_F ? 1.0 : 0.0;
-                        double eps_W = flag[i - 1][j] & C_F ? 1.0 : 0.0;
-                        double eps_N = flag[i][j + 1] & C_F ? 1.0 : 0.0;
-                        double eps_S = flag[i][j - 1] & C_F ? 1.0 : 0.0;
+                        double eps_E = flag[i + 1][j] & CELL_FLUID ? 1.0 : 0.0;
+                        double eps_W = flag[i - 1][j] & CELL_FLUID ? 1.0 : 0.0;
+                        double eps_N = flag[i][j + 1] & CELL_FLUID ? 1.0 : 0.0;
+                        double eps_S = flag[i][j - 1] & CELL_FLUID ? 1.0 : 0.0;
 
                         double beta_mod = -omega / ((eps_E + eps_W) * rdx2 + (eps_N + eps_S) * rdy2);
                         p[i][j] = (1.0 - omega) * p[i][j] -
@@ -150,13 +151,13 @@ double poisson()
         }
 
         /* computation of residual */
-        for (int i = 1; i < imax + 1; i++) {
-            for (int j = 1; j < jmax + 1; j++) {
-                if (flag[i][j] & C_F) {
-                    double eps_E = flag[i + 1][j] & C_F ? 1.0 : 0.0;
-                    double eps_W = flag[i - 1][j] & C_F ? 1.0 : 0.0;
-                    double eps_N = flag[i][j + 1] & C_F ? 1.0 : 0.0;
-                    double eps_S = flag[i][j - 1] & C_F ? 1.0 : 0.0;
+        for (int i = 1; i < h_cell_count + 1; i++) {
+            for (int j = 1; j < v_cell_count + 1; j++) {
+                if (flag[i][j] & CELL_FLUID) {
+                    double eps_E = flag[i + 1][j] & CELL_FLUID ? 1.0 : 0.0;
+                    double eps_W = flag[i - 1][j] & CELL_FLUID ? 1.0 : 0.0;
+                    double eps_N = flag[i][j + 1] & CELL_FLUID ? 1.0 : 0.0;
+                    double eps_S = flag[i][j - 1] & CELL_FLUID ? 1.0 : 0.0;
 
                     /* only fluid cells */
                     double add = (eps_E * (p[i + 1][j] - p[i][j]) - eps_W * (p[i][j] - p[i - 1][j])) * rdx2 +
@@ -182,19 +183,19 @@ double poisson()
  */
 void update_velocity()
 {
-    for (int i = 1; i < imax - 2; i++) {
-        for (int j = 1; j < jmax - 1; j++) {
+    for (int i = 1; i < h_cell_count - 2; i++) {
+        for (int j = 1; j < v_cell_count - 1; j++) {
             /* only if both adjacent cells are fluid cells */
-            if (flag[i][j] & C_F && flag[i + 1][j] & C_F) {
+            if (flag[i][j] & CELL_FLUID && flag[i + 1][j] & CELL_FLUID) {
                 u[i][j] = f[i][j] - (p[i + 1][j] - p[i][j]) * del_t / delx;
             }
         }
     }
 
-    for (int i = 1; i < imax - 1; i++) {
-        for (int j = 1; j < jmax - 2; j++) {
+    for (int i = 1; i < h_cell_count - 1; i++) {
+        for (int j = 1; j < v_cell_count - 2; j++) {
             /* only if both adjacent cells are fluid cells */
-            if (flag[i][j] & C_F && (flag[i][j + 1] & C_F)) {
+            if (flag[i][j] & CELL_FLUID && (flag[i][j + 1] & CELL_FLUID)) {
                 v[i][j] = g[i][j] - (p[i][j + 1] - p[i][j]) * del_t / dely;
             }
         }
@@ -213,14 +214,14 @@ void set_timestep_interval()
         double umax = 1.0e-10;
         double vmax = 1.0e-10;
 
-        for (int i = 0; i < imax + 2; i++) {
-            for (int j = 1; j < jmax + 2; j++) {
+        for (int i = 0; i < h_cell_count + 2; i++) {
+            for (int j = 1; j < v_cell_count + 2; j++) {
                 umax = fmax(fabs(u[i][j]), umax);
             }
         }
 
-        for (int i = 1; i < imax + 2; i++) {
-            for (int j = 0; j < jmax + 2; j++) {
+        for (int i = 1; i < h_cell_count + 2; i++) {
+            for (int j = 0; j < v_cell_count + 2; j++) {
                 vmax = fmax(fabs(v[i][j]), vmax);
             }
         }
@@ -276,13 +277,13 @@ int main(int argc, char *argv[])
 
         apply_boundary_conditions();
 
-        if ((iters % output_freq == 0)) {
+        if (iters % output_freq == 0) {
             printf("Step %8d, Time: %14.8e (del_t: %14.8e), Residual: %14.8e\n", iters, t + del_t, del_t, res);
 
-            if ((!no_output) && (enable_checkpoints))
+            if (!no_output && enable_checkpoints)
                 write_checkpoint(iters, t + del_t);
         }
-    } /* End of main loop */
+    }
 
     printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", iters, t, res);
     printf("Simulation complete.\n");

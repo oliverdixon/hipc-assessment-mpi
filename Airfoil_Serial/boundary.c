@@ -8,21 +8,21 @@
  */
 void apply_boundary_conditions()
 {
-    for (int j = 0; j < jmax + 2; j++) {
+    for (int j = 0; j < v_cell_count + 2; j++) {
         /* Fluid freely flows in from the west */
         u[0][j] = u[1][j];
         v[0][j] = v[1][j];
 
         /* Fluid freely flows out to the east */
-        u[imax][j] = u[imax - 1][j];
-        v[imax + 1][j] = v[imax][j];
+        u[h_cell_count][j] = u[h_cell_count - 1][j];
+        v[h_cell_count + 1][j] = v[h_cell_count][j];
     }
 
-    for (int i = 0; i < imax + 2; i++) {
+    for (int i = 0; i < h_cell_count + 2; i++) {
         /* The vertical velocity approaches 0 at the north and south
          * boundaries, but fluid flows freely in the horizontal direction */
-        v[i][jmax] = 0.0;
-        u[i][jmax + 1] = u[i][jmax];
+        v[i][v_cell_count] = 0.0;
+        u[i][v_cell_count + 1] = u[i][v_cell_count];
 
         v[i][0] = 0.0;
         u[i][0] = u[i][1];
@@ -32,49 +32,49 @@ void apply_boundary_conditions()
      * internal obstacle cells. This forces the u and v velocity to
      * tend towards zero in these cells.
      */
-    for (int i = 1; i < imax + 1; i++) {
-        for (int j = 1; j < jmax + 1; j++) {
-            if (flag[i][j] & B_NSEW) {
+    for (int i = 1; i < h_cell_count + 1; i++) {
+        for (int j = 1; j < v_cell_count + 1; j++) {
+            if (flag[i][j] & CELL_FLUID_ALL) {
                 switch (flag[i][j]) {
-                case B_N:
+                case CELL_FLUID_NORTH:
                     v[i][j] = 0.0;
                     u[i][j] = -u[i][j + 1];
                     u[i - 1][j] = -u[i - 1][j + 1];
                     break;
-                case B_E:
+                case CELL_FLUID_EAST:
                     u[i][j] = 0.0;
                     v[i][j] = -v[i + 1][j];
                     v[i][j - 1] = -v[i + 1][j - 1];
                     break;
-                case B_S:
+                case CELL_FLUID_SOUTH:
                     v[i][j - 1] = 0.0;
                     u[i][j] = -u[i][j - 1];
                     u[i - 1][j] = -u[i - 1][j - 1];
                     break;
-                case B_W:
+                case CELL_FLUID_WEST:
                     u[i - 1][j] = 0.0;
                     v[i][j] = -v[i - 1][j];
                     v[i][j - 1] = -v[i - 1][j - 1];
                     break;
-                case B_NE:
+                case CELL_FLUID_NORTHEAST:
                     v[i][j] = 0.0;
                     u[i][j] = 0.0;
                     v[i][j - 1] = -v[i + 1][j - 1];
                     u[i - 1][j] = -u[i - 1][j + 1];
                     break;
-                case B_SE:
+                case CELL_FLUID_SOUTHEAST:
                     v[i][j - 1] = 0.0;
                     u[i][j] = 0.0;
                     v[i][j] = -v[i + 1][j];
                     u[i - 1][j] = -u[i - 1][j - 1];
                     break;
-                case B_SW:
+                case CELL_FLUID_SOUTHWEST:
                     v[i][j - 1] = 0.0;
                     u[i - 1][j] = 0.0;
                     v[i][j] = -v[i - 1][j];
                     u[i][j] = -u[i][j - 1];
                     break;
-                case B_NW:
+                case CELL_FLUID_NORTHWEST:
                     v[i][j] = 0.0;
                     u[i - 1][j] = 0.0;
                     v[i][j - 1] = -v[i - 1][j - 1];
@@ -89,7 +89,7 @@ void apply_boundary_conditions()
      * a continual flow of fluid into the simulation.
      */
     v[0][0] = 2 * vi - v[1][0];
-    for (int j = 1; j < jmax + 1; j++) {
+    for (int j = 1; j < v_cell_count + 1; j++) {
         u[0][j] = ui;
         v[0][j] = 2 * vi - v[1][j];
     }

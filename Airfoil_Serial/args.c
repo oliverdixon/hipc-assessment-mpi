@@ -60,18 +60,23 @@ void parse_args(int argc, char *argv[])
     while ((c = getopt_long(argc, argv, GETOPTS, long_options, &option_index)) != -1) {
         switch (c) {
         case 'a':
-            airfoil = atoi(optarg);
-            if ((airfoil < 1000) || (airfoil > 9999)) {
+            const int parameters = atoi(optarg);
+
+            if (parameters < 1000 || parameters > 9999) {
                 fprintf(stderr, "Error: NACA Airfoil Specification must be 4-digits.\n");
                 print_help(argv[0]);
                 exit(1);
             }
+
+            naca_specifier.maximum_camber = parameters / 1000;
+            naca_specifier.edge_distance = parameters / 100 % 10;
+            naca_specifier.maximum_thickness = parameters % 100;
             break;
         case 'x':
-            imax = atoi(optarg);
+            h_cell_count = atoi(optarg);
             break;
         case 'y':
-            jmax = atoi(optarg);
+            v_cell_count = atoi(optarg);
             break;
         case 't':
             t_end = atof(optarg);
@@ -112,9 +117,9 @@ void print_opts()
     printf("=======================================\n");
     printf("Started with the following options\n");
     printf("=======================================\n");
-    printf("  airfoil          = %d\n", airfoil);
-    printf("  cellx            = %14d\n", imax);
-    printf("  celly            = %14d\n", jmax);
+    printf("  airfoil          = %1d%1d%2d\n", naca_specifier.maximum_camber, naca_specifier.edge_distance, naca_specifier.maximum_thickness);
+    printf("  cellx            = %14d\n", h_cell_count);
+    printf("  celly            = %14d\n", v_cell_count);
     printf("  endtime          = %14.12lf\n", t_end);
     printf("  del-t            = %14lf\n", del_t);
     printf("  freq             = %14d\n", output_freq);

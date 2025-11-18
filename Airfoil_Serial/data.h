@@ -1,25 +1,38 @@
 #ifndef DATA_H
 #define DATA_H
 
-#define C_B 0x0000 /* This cell is an obstacle/boundary cell */
-#define B_N 0x0001 /* This obstacle cell has a fluid cell to the north */
-#define B_S 0x0002 /* This obstacle cell has a fluid cell to the south */
-#define B_W 0x0004 /* This obstacle cell has a fluid cell to the west */
-#define B_E 0x0008 /* This obstacle cell has a fluid cell to the east */
-#define B_NW (B_N | B_W)
-#define B_SW (B_S | B_W)
-#define B_NE (B_N | B_E)
-#define B_SE (B_S | B_E)
-#define B_NSEW (B_N | B_S | B_E | B_W)
+enum cell_flags
+{
+    CELL_BOUNDARY = 0x0000, /**< Boundary cell */
 
-#define C_F 0x0010 /* This cell is a fluid cell */
+    CELL_FLUID_NORTH = 0x0001, /**< Boundary cell with fluid to the north */
+    CELL_FLUID_SOUTH = 0x0002, /**< Boundary cell with fluid to the south */
+    CELL_FLUID_WEST = 0x0004, /**< Boundary cell with fluid to the west */
+    CELL_FLUID_EAST = 0x0008, /**< Boundary cell with fluid to the east */
 
-extern double xlength; /* Width of simulated domain */
-extern double ylength; /* Height of simulated domain */
-extern int imax; /* Number of cells horizontally */
-extern int jmax; /* Number of cells vertically */
+    CELL_FLUID_NORTHWEST = CELL_FLUID_NORTH | CELL_FLUID_WEST,
+    CELL_FLUID_SOUTHWEST = CELL_FLUID_SOUTH | CELL_FLUID_WEST,
+    CELL_FLUID_NORTHEAST = CELL_FLUID_NORTH | CELL_FLUID_EAST,
+    CELL_FLUID_SOUTHEAST = CELL_FLUID_SOUTH | CELL_FLUID_EAST,
+    CELL_FLUID_ALL = CELL_FLUID_NORTH | CELL_FLUID_SOUTH | CELL_FLUID_EAST | CELL_FLUID_WEST,
 
-extern int airfoil; /* NACA 4-digit Airfoil Spec */
+    CELL_FLUID = 0x0010, /**< Fluid cell */
+};
+
+struct naca_specifier
+{
+    unsigned char maximum_camber;
+    unsigned char edge_distance;
+    unsigned char maximum_thickness;
+};
+
+extern struct naca_specifier naca_specifier;
+
+extern double problem_space_width; /* Width of simulated domain */
+extern double problem_space_height; /* Height of simulated domain */
+
+extern int h_cell_count; /* Number of cells horizontally */
+extern int v_cell_count; /* Number of cells vertically */
 
 extern double t_end; /* Simulation runtime */
 extern double del_t; /* Duration of each timestep */

@@ -2,12 +2,18 @@
 
 #include "data.h"
 
-double xlength = 4.0; /* Width of simulated domain */
-double ylength = 1.0; /* Height of simulated domain */
-int imax = 1024; /* Number of cells horizontally */
-int jmax = 256; /* Number of cells vertically */
+double problem_space_width = 4.0; /* Width of simulated domain */
+double problem_space_height = 1.0; /* Height of simulated domain */
 
-int airfoil = 2412; /* NACA 4-digit Airfoil Spec */
+int h_cell_count = 1024; /* Number of cells horizontally */
+int v_cell_count = 256; /* Number of cells vertically */
+
+struct naca_specifier naca_specifier =
+{
+    .maximum_camber = 2,
+    .edge_distance = 4,
+    .maximum_thickness = 12
+};
 
 double t_end = 2.0; /* Simulation runtime */
 double del_t = 0.003; /* Duration of each timestep */
