@@ -245,8 +245,7 @@ static void compute_poisson_source()
 }
 
 /**
- * @brief Red/Black SOR to solve the poisson equation.
- *
+ * @brief Red-black successive order relaxation to solve the poisson equation.
  * @return Calculated residual of the computation
  *
  */
@@ -258,89 +257,85 @@ static double compute_pressure()
 
     compute_poisson_source();
 
-    double rdx2 = 1.0 / (x_grid_spacing * x_grid_spacing);
-    double rdy2 = 1.0 / (y_grid_spacing * y_grid_spacing);
-    double beta_2 = -omega / (2.0 * (rdx2 + rdy2));
+    const double rdx2 = 1.0 / (x_grid_spacing * x_grid_spacing);
+    const double rdy2 = 1.0 / (y_grid_spacing * y_grid_spacing);
+    const double beta_2 = -omega / (2.0 * (rdx2 + rdy2));
 
     double p0 = 0.0;
+
     /* Calculate sum of squares */
-    for (int i = 1; i < h_cell_count + 1; i++) {
-        for (int j = 1; j < v_cell_count + 1; j++) {
-            if (flags[i][j] & CELL_FLUID) {
-                p0 += pressure[i][j] * pressure[i][j];
-            }
-        }
-    }
+    for (int h_cell_idx = 1; h_cell_idx < h_cell_count + 1; ++h_cell_idx)
+        for (int v_cell_idx = 1; v_cell_idx < v_cell_count + 1; ++v_cell_idx)
+            if (flags[h_cell_idx][v_cell_idx] & CELL_FLUID)
+                p0 += pressure[h_cell_idx][v_cell_idx] * pressure[h_cell_idx][v_cell_idx];
 
     p0 = sqrt(p0 / fluid_cell_count);
-    if (p0 < 0.0001) {
+    if (p0 < 0.0001)
         p0 = 1.0;
-    }
 
     /* Red/Black SOR-iteration */
-    double res = 0.0;
-    for (int iter = 0; iter < itermax; iter++) {
-        for (int rb = 0; rb < 2; rb++) {
-            for (int i = 1; i < h_cell_count + 1; i++) {
-                for (int j = 1; j < v_cell_count + 1; j++) {
-                    if ((i + j) % 2 != rb) {
+
+    double residual = 0.0;
+
+    for (int iteration = 0; iteration < itermax; ++iteration) {
+        for (int rb = 0; rb < 2; rb++)
+            for (int h_cell_idx = 1; h_cell_idx < h_cell_count + 1; h_cell_idx++)
+                for (int v_cell_idx = 1; v_cell_idx < v_cell_count + 1; v_cell_idx++) {
+                    if ((h_cell_idx + v_cell_idx) % 2 != rb)
                         continue;
-                    }
-                    if (flags[i][j] == (CELL_FLUID | CELL_FLUID_ALL)) {
+
+                    if (flags[h_cell_idx][v_cell_idx] == (CELL_FLUID | CELL_FLUID_ALL)) {
                         /* five point star for interior fluid cells */
-                        pressure[i][j] = (1.0 - omega) * pressure[i][j] -
+                        pressure[h_cell_idx][v_cell_idx] = (1.0 - omega) * pressure[h_cell_idx][v_cell_idx] -
                                 beta_2 *
-                                        ((pressure[i + 1][j] + pressure[i - 1][j]) * rdx2 +
-                                                (pressure[i][j + 1] + pressure[i][j - 1]) * rdy2 -
-                                                poisson_source[i][j]);
-                    } else if (flags[i][j] & CELL_FLUID) {
+                                        ((pressure[h_cell_idx + 1][v_cell_idx] + pressure[h_cell_idx - 1][v_cell_idx]) * rdx2 +
+                                                (pressure[h_cell_idx][v_cell_idx + 1] + pressure[h_cell_idx][v_cell_idx - 1]) * rdy2 -
+                                                poisson_source[h_cell_idx][v_cell_idx]);
+
+                    } else if (flags[h_cell_idx][v_cell_idx] & CELL_FLUID) {
                         /* modified star near boundary */
 
-                        double eps_E = flags[i + 1][j] & CELL_FLUID ? 1.0 : 0.0;
-                        double eps_W = flags[i - 1][j] & CELL_FLUID ? 1.0 : 0.0;
-                        double eps_N = flags[i][j + 1] & CELL_FLUID ? 1.0 : 0.0;
-                        double eps_S = flags[i][j - 1] & CELL_FLUID ? 1.0 : 0.0;
+                        const double epsilon_east = !!(flags[h_cell_idx + 1][v_cell_idx] & CELL_FLUID);
+                        const double epsilon_west = !!(flags[h_cell_idx - 1][v_cell_idx] & CELL_FLUID);
+                        const double epsilon_north = !!(flags[h_cell_idx][v_cell_idx + 1] & CELL_FLUID);
+                        const double epsilon_south = !!(flags[h_cell_idx][v_cell_idx - 1] & CELL_FLUID);
 
-                        double beta_mod = -omega / ((eps_E + eps_W) * rdx2 + (eps_N + eps_S) * rdy2);
-                        pressure[i][j] = (1.0 - omega) * pressure[i][j] -
+                        const double beta_mod = -omega / ((epsilon_east + epsilon_west) * rdx2 + (epsilon_north + epsilon_south) * rdy2);
+                        pressure[h_cell_idx][v_cell_idx] = (1.0 - omega) * pressure[h_cell_idx][v_cell_idx] -
                                 beta_mod *
-                                        ((eps_E * pressure[i + 1][j] + eps_W * pressure[i - 1][j]) * rdx2 +
-                                                (eps_N * pressure[i][j + 1] + eps_S * pressure[i][j - 1]) * rdy2 -
-                                                poisson_source[i][j]);
+                                        ((epsilon_east * pressure[h_cell_idx + 1][v_cell_idx] + epsilon_west * pressure[h_cell_idx - 1][v_cell_idx]) * rdx2 +
+                                                (epsilon_north * pressure[h_cell_idx][v_cell_idx + 1] + epsilon_south * pressure[h_cell_idx][v_cell_idx - 1]) * rdy2 -
+                                                poisson_source[h_cell_idx][v_cell_idx]);
                     }
                 }
-            }
-        }
 
-        /* computation of residual */
-        for (int i = 1; i < h_cell_count + 1; i++) {
-            for (int j = 1; j < v_cell_count + 1; j++) {
-                if (flags[i][j] & CELL_FLUID) {
-                    double eps_E = flags[i + 1][j] & CELL_FLUID ? 1.0 : 0.0;
-                    double eps_W = flags[i - 1][j] & CELL_FLUID ? 1.0 : 0.0;
-                    double eps_N = flags[i][j + 1] & CELL_FLUID ? 1.0 : 0.0;
-                    double eps_S = flags[i][j - 1] & CELL_FLUID ? 1.0 : 0.0;
+        // Compute the Laplacian residual over fluid cells.
 
-                    /* only fluid cells */
-                    double add = (eps_E * (pressure[i + 1][j] - pressure[i][j]) -
-                                         eps_W * (pressure[i][j] - pressure[i - 1][j])) *
+        for (int h_cell_idx = 1; h_cell_idx < h_cell_count + 1; ++h_cell_idx)
+            for (int v_cell_idx = 1; v_cell_idx < v_cell_count + 1; ++v_cell_idx)
+                if (flags[h_cell_idx][v_cell_idx] & CELL_FLUID) {
+
+                    const double epsilon_east = !!(flags[h_cell_idx + 1][v_cell_idx] & CELL_FLUID);
+                    const double epsilon_west = !!(flags[h_cell_idx - 1][v_cell_idx] & CELL_FLUID);
+                    const double epsilon_north = !!(flags[h_cell_idx][v_cell_idx + 1] & CELL_FLUID);
+                    const double epsilon_south = !!(flags[h_cell_idx][v_cell_idx - 1] & CELL_FLUID);
+
+                    const double add = (epsilon_east * (pressure[h_cell_idx + 1][v_cell_idx] - pressure[h_cell_idx][v_cell_idx]) -
+                                         epsilon_west * (pressure[h_cell_idx][v_cell_idx] - pressure[h_cell_idx - 1][v_cell_idx])) *
                                     rdx2 +
-                            (eps_N * (pressure[i][j + 1] - pressure[i][j]) -
-                                    eps_S * (pressure[i][j] - pressure[i][j - 1])) *
+                            (epsilon_north * (pressure[h_cell_idx][v_cell_idx + 1] - pressure[h_cell_idx][v_cell_idx]) -
+                                    epsilon_south * (pressure[h_cell_idx][v_cell_idx] - pressure[h_cell_idx][v_cell_idx - 1])) *
                                     rdy2 -
-                            poisson_source[i][j];
-                    res += add * add;
+                            poisson_source[h_cell_idx][v_cell_idx];
+                    residual += add * add;
                 }
-            }
-        }
-        res = sqrt(res / fluid_cell_count) / p0;
 
-        /* convergence? */
-        if (res < epsilon)
-            break;
+        residual = sqrt(residual / fluid_cell_count) / p0;
+        if (residual < epsilon)
+            break; // The residual has converged.
     }
 
-    return res;
+    return residual;
 }
 
 

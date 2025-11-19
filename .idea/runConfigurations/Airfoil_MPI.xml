@@ -1,5 +1,5 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="Airfoil_MPI" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="$CMakeCurrentProductFile$ 10" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/Airfoil_MPI" PASS_PARENT_ENVS_2="true" PROJECT_NAME="HIPC_Assessment" TARGET_NAME="Airfoil_MPI" CONFIG_NAME="Debug" RUN_PATH="$PROJECT_DIR$/Airfoil_MPI/run.sh">
+  <configuration default="false" name="Airfoil_MPI" type="CMakeRunConfiguration" factoryName="Application" singleton="false" PROGRAM_PARAMS="$CMakeCurrentProductFile$ 4" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/Airfoil_MPI" PASS_PARENT_ENVS_2="true" PROJECT_NAME="HIPC_Assessment" TARGET_NAME="Airfoil_MPI" CONFIG_NAME="Debug" RUN_PATH="$PROJECT_DIR$/Airfoil_MPI/run.sh">
     <envs>
       <env name="PSM2_CUDA" value="0" />
     </envs>

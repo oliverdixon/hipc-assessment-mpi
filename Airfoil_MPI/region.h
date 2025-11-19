@@ -31,7 +31,11 @@ enum region_flags
     REGION_NORTH_BOUNDARY = 1,
     REGION_SOUTH_BOUNDARY = 1 << 1,
     REGION_WEST_BOUNDARY = 1 << 2,
-    REGION_EAST_BOUNDARY = 1 << 3
+    REGION_EAST_BOUNDARY = 1 << 3,
+    REGION_NORTH_GHOST = 1 << 4,
+    REGION_SOUTH_GHOST = 1 << 5,
+    REGION_WEST_GHOST = 1 << 6,
+    REGION_EAST_GHOST = 1 << 7
 };
 
 struct iterator
@@ -56,6 +60,10 @@ struct region
     const struct iterator v_interior;
     const struct iterator h_exterior;
     const struct iterator v_exterior;
+    const unsigned int resolution;
+
+    const unsigned int x_indent;
+    const unsigned int y_indent;
 
     const double initial_velocity_x;
     const double initial_velocity_y;

@@ -76,6 +76,7 @@ void problem_set_up()
          * outside of the problem space and we're not interested.
          */
         const double x = problem_space_width / h_cell_count * h_cell_idx - 0.5;
+
         if (x < 0.0 || x > 1.0)
             continue;
 
@@ -121,8 +122,10 @@ void problem_set_up()
         const unsigned int v_idx_end = (unsigned int) ceil((upper_camber_y + problem_space_height / 2.0) *
             vertical_scaler);
 
-        for (unsigned int v_cell_idx = v_idx_start; v_cell_idx < v_idx_end; v_cell_idx++)
+        for (unsigned int v_cell_idx = v_idx_start; v_cell_idx < v_idx_end; ++v_cell_idx)
             flags[h_cell_idx][v_cell_idx] = CELL_BOUNDARY;
+
+        printf("%d\t%d\t%d\n", h_cell_idx, v_idx_start, v_idx_end);
     }
 
     // Mark the extreme north and south boundary cells
