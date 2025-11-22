@@ -27,8 +27,8 @@ struct instance
     const int x_position;
     const int y_position;
 
-    const float global_problem_width;
-    const float global_problem_height;
+    const float problem_width;
+    const float problem_height;
     const struct naca_specifier naca_specifier;
 };
 

@@ -33,8 +33,8 @@ struct instance instance_create()
         .x_position = coords[0],
         .y_position = coords[1],
 
-        .global_problem_width = 4.0f,
-        .global_problem_height = 1.0f,
+        .problem_width = 4.0f,
+        .problem_height = 1.0f,
         .naca_specifier = {
             .maximum_camber = 2,
             .edge_distance = 4,
@@ -57,7 +57,7 @@ void instance_describe(const struct instance *instance, FILE *const destination)
                          instance->rank, instance->count - 1,
                          instance->x_dim_extent, instance->y_dim_extent,
                          instance->x_position, instance->y_position,
-                         instance->global_problem_width, instance->global_problem_height,
+                         instance->problem_width, instance->problem_height,
                          instance->naca_specifier.maximum_camber, instance->naca_specifier.edge_distance,
                             instance->naca_specifier.maximum_thickness);
 }
