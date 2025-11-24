@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #include "instance.h"
 #include "region.h"
@@ -271,6 +272,11 @@ static enum region_flags compute_region_flags(
         struct dim2 *const local_cell_counts, struct dim2 *const allocations)
 {
     enum region_flags region_flags = REGION_UNREMARKABLE;
+    struct dim2 ghost_counts = {
+        .x = 0,
+        .y = 0
+    };
+
     bool x_ghosts_finalised = false;
     bool y_ghosts_finalised = false;
 
@@ -281,7 +287,7 @@ static enum region_flags compute_region_flags(
              * east ghost.
              */
             region_flags |= REGION_WEST_BOUNDARY | REGION_EAST_GHOST;
-            ++allocations->x;
+            ++ghost_counts.x;
             x_ghosts_finalised = true;
         }
 
@@ -292,7 +298,7 @@ static enum region_flags compute_region_flags(
              */
             region_flags |= REGION_EAST_BOUNDARY | REGION_WEST_GHOST;
             local_cell_counts->x += global_cell_counts->x % instance->dim_extents.x;
-            ++allocations->x;
+            ++ghost_counts.x;
             x_ghosts_finalised = true;
         }
     } else {
@@ -308,7 +314,7 @@ static enum region_flags compute_region_flags(
              * south ghost.
              */
             region_flags |= REGION_NORTH_BOUNDARY | REGION_SOUTH_GHOST;
-            ++allocations->y;
+            ++ghost_counts.y;
             y_ghosts_finalised = true;
         }
 
@@ -319,7 +325,7 @@ static enum region_flags compute_region_flags(
              */
             region_flags |= REGION_SOUTH_BOUNDARY | REGION_NORTH_GHOST;
             local_cell_counts->y += global_cell_counts->y % instance->dim_extents.y;
-            ++allocations->y;
+            ++ghost_counts.y;
             y_ghosts_finalised = true;
         }
     } else {
@@ -331,17 +337,23 @@ static enum region_flags compute_region_flags(
     if (!x_ghosts_finalised) {
         // Multiple regions on the X, and we're in the middle.
         region_flags |= REGION_WEST_GHOST | REGION_EAST_GHOST;
-        allocations->x += 2;
+        ghost_counts.x += 2;
     }
 
     if (!y_ghosts_finalised) {
         // Multiple regions on the Y, and we're in the middle.
         region_flags |= REGION_NORTH_GHOST | REGION_SOUTH_GHOST;
-        allocations->y += 2;
+        ghost_counts.y += 2;
     }
 
     // Verify that pole-wise boundaries and ghosts are mutually exclusive.
-    assert(((region_flags >> REGION_BOUNDARY_START_POSITION) & (region_flags >> REGION_GHOST_START_POSITION)) == 0);
+    static const uint32_t mask = ~(~0U << (REGION_GHOST_START_POSITION - REGION_BOUNDARY_START_POSITION));
+    assert(!(((region_flags >> REGION_BOUNDARY_START_POSITION) & (region_flags >> REGION_GHOST_START_POSITION))
+        & mask));
+
+    // Update allocations with final values.
+    allocations->x = local_cell_counts->x + ghost_counts.x;
+    allocations->y = local_cell_counts->y + ghost_counts.y;
 
     return region_flags;
 }
@@ -351,56 +363,69 @@ struct region region_create(const struct instance *const instance)
     static const unsigned int resolution = 128; // Number of cells per unit-distance.
 
     const struct dim2 global_cell_counts = {
-            .x = (indexer_t) ceil((compute_t) resolution * instance->problem_size.x),
-            .y = (indexer_t) ceil((compute_t) resolution * instance->problem_size.y)};
+        .x = (indexer_t) ceil((compute_t) resolution * instance->problem_size.x),
+        .y = (indexer_t) ceil((compute_t) resolution * instance->problem_size.y)
+    };
 
     struct dim2 local_cell_counts = {
-            .x = global_cell_counts.x / instance->dim_extents.x, .y = global_cell_counts.y / instance->dim_extents.y};
+        .x = global_cell_counts.x / instance->dim_extents.x,
+        .y = global_cell_counts.y / instance->dim_extents.y
+    };
 
-    struct dim2 allocations = {.x = local_cell_counts.x, .y = local_cell_counts.y};
+    struct dim2 allocations = {
+        .x = local_cell_counts.x,
+        .y = local_cell_counts.y
+    };
 
-    const enum region_flags region_flags =
-            compute_region_flags(instance, &global_cell_counts, &local_cell_counts, &allocations);
+    const enum region_flags region_flags = compute_region_flags(instance, &global_cell_counts, &local_cell_counts,
+        &allocations);
 
     const struct iterator h_exterior = {
-            .begin = !!(region_flags & REGION_WEST_GHOST),
-            .end = local_cell_counts.x + !!(region_flags & REGION_WEST_GHOST)};
+        .begin = !!(region_flags & REGION_WEST_GHOST),
+        .end = local_cell_counts.x + !!(region_flags & REGION_WEST_GHOST)
+    };
 
     const struct iterator v_exterior = {
-            .begin = !!(region_flags & REGION_NORTH_GHOST),
-            .end = local_cell_counts.y + !!(region_flags & REGION_NORTH_GHOST)};
+        .begin = !!(region_flags & REGION_NORTH_GHOST),
+        .end = local_cell_counts.y + !!(region_flags & REGION_NORTH_GHOST)
+    };
 
     const struct region region = {
-            .velocity_x = alloc_2d_compute_array(allocations),
-            .velocity_y = alloc_2d_compute_array(allocations),
-            .tentative_velocity_x = alloc_2d_compute_array(allocations),
-            .tentative_velocity_y = alloc_2d_compute_array(allocations),
-            .pressure = alloc_2d_compute_array(allocations),
-            .flags = alloc_2d_flags_array(allocations),
+        .velocity_x = alloc_2d_compute_array(allocations),
+        .velocity_y = alloc_2d_compute_array(allocations),
+        .tentative_velocity_x = alloc_2d_compute_array(allocations),
+        .tentative_velocity_y = alloc_2d_compute_array(allocations),
+        .pressure = alloc_2d_compute_array(allocations),
+        .flags = alloc_2d_flags_array(allocations),
 
-            .region_flags = region_flags,
+        .region_flags = region_flags,
 
-            .h_interior =
-                    {.begin = h_exterior.begin + !!(region_flags & REGION_WEST_BOUNDARY),
-                     .end = h_exterior.end - !!(region_flags & REGION_EAST_BOUNDARY)},
+        .h_interior = {
+            .begin = h_exterior.begin + !!(region_flags & REGION_WEST_BOUNDARY),
+            .end = h_exterior.end - !!(region_flags & REGION_EAST_BOUNDARY)
+        },
 
-            .v_interior =
-                    {.begin = v_exterior.begin + !!(region_flags & REGION_NORTH_BOUNDARY),
-                     .end = v_exterior.end - !!(region_flags & REGION_SOUTH_BOUNDARY)},
+        .v_interior = {
+            .begin = v_exterior.begin + !!(region_flags & REGION_NORTH_BOUNDARY),
+            .end = v_exterior.end - !!(region_flags & REGION_SOUTH_BOUNDARY)
+        },
 
-            .h_exterior = h_exterior,
-            .v_exterior = v_exterior,
-            .resolution = resolution,
-            .indents = instance_get_indentations(instance, local_cell_counts),
+        .h_exterior = h_exterior,
+        .v_exterior = v_exterior,
+        .resolution = resolution,
+        .indents = instance_get_indentations(instance, local_cell_counts),
 
-            .initial_velocity_x = 1.0,
-            .initial_velocity_y = 0.0,
-            .initial_pressure = 0.0,
-            .initial_flag = CELL_FLUID,
+        .initial_velocity_x = 1.0,
+        .initial_velocity_y = 0.0,
+        .initial_pressure = 0.0,
+        .initial_flag = CELL_FLUID,
 
-            .row_t = create_row_t(allocations.x, allocations.y),
-            .col_t = create_column_t(allocations.y),
+        .row_t = create_row_t(allocations.x, allocations.y),
+        .col_t = create_column_t(allocations.y),
     };
+
+    assert(h_exterior.end <= allocations.x);
+    assert(v_exterior.end <= allocations.y);
 
     return region;
 }
@@ -444,9 +469,12 @@ void region_describe(const struct region *const region, FILE *const destination)
             region->region_flags & REGION_NORTH_GHOST ? "Yes" : "No",
             region->region_flags & REGION_SOUTH_GHOST ? "Yes" : "No",
             region->region_flags & REGION_WEST_GHOST ? "Yes" : "No",
-            region->region_flags & REGION_EAST_GHOST ? "Yes" : "No", region->h_interior.begin,
-            region->h_interior.end - 1, region->v_interior.begin, region->v_interior.end - 1, region->h_exterior.begin,
-            region->h_exterior.end - 1, region->v_exterior.begin, region->v_exterior.end - 1, region->indents.x,
+            region->region_flags & REGION_EAST_GHOST ? "Yes" : "No",
+            region->h_interior.begin, region->h_interior.end - 1,
+            region->v_interior.begin, region->v_interior.end - 1,
+            region->h_exterior.begin, region->h_exterior.end - 1,
+            region->v_exterior.begin, region->v_exterior.end - 1,
+            region->indents.x,
             region->indents.y);
 }
 
@@ -488,4 +516,86 @@ void region_initialise(const struct region *const region, const struct instance 
     }
 
     write_initial_extreme_boundaries(region);
+}
+
+void region_serialise_vtk(const struct region * const region, FILE * const destination)
+{
+    const struct dim2 size = {
+        .x = region->h_exterior.end - region->h_exterior.begin,
+        .y = region->v_exterior.end - region->v_exterior.begin
+    };
+
+    const struct dim2 scaled_size = {
+        .x = size.x + region->indents.x - 1,
+        .y = size.y + region->indents.y - 1
+    };
+
+    fprintf(destination,
+        "<?xml version=\"1.0\"?>\n"
+        "<VTKFile type=\"RectilinearGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
+        "\t<RectilinearGrid WholeExtent=\"%u %u %u %u 0 0\" GhostLevel=\"0\">\n"
+        "\t\t<Piece Extent=\"%u %u %u %u 0 0\">\n"
+        "\t\t\t<Coordinates>\n",
+
+        region->indents.x, scaled_size.x,
+        region->indents.y, scaled_size.y,
+        region->indents.x, scaled_size.x,
+        region->indents.y, scaled_size.y);
+
+    fprintf(destination, "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"X\" RangeMin=\"%lf\" "
+                         "RangeMax=\"%lf\">\n",
+        (compute_t) region->indents.x / region->resolution,
+        (compute_t) scaled_size.x / region->resolution);
+
+    // Write out physical positions of X co-ordinates.
+    for (indexer_t h_idx = 0; h_idx < size.x; ++h_idx)
+        fprintf(destination, "%lf ", (compute_t) (h_idx + region->indents.x) / region->resolution);
+
+    fprintf(destination, "\n\t\t\t\t</DataArray>\n"
+                         "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Y\" RangeMin=\"%lf\" "
+                         "RangeMax=\"%lf\">\n",
+        (compute_t) region->indents.y / region->resolution,
+        (compute_t) scaled_size.y / region->resolution);
+
+    // Write out physical positions of Y co-ordinates.
+    for (indexer_t v_idx = 0; v_idx < size.y; ++v_idx)
+        fprintf(destination, "%lf ", (compute_t) (v_idx + region->indents.y) / region->resolution);
+
+    fputs(
+        "\n\t\t\t\t</DataArray>\n"
+        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Z\">\n"
+        "0.0\n"
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</Coordinates>\n"
+        "\t\t\t<PointData Vectors=\"uv\">\n"
+        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"uv\" NumberOfComponents=\"3\">\n",
+
+        destination);
+
+    // Write out velocity vectors.
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx)
+        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%.12e %.12e 0\n", region->velocity_x[h_idx][v_idx], region->velocity_y[h_idx][v_idx]);
+
+    fputs(
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</PointData>\n"
+        "\t\t\t<CellData Scalars=\"p\">\n"
+        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"p\">\n",
+
+        destination);
+
+    // Write out pressure scalars.
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx)
+        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%.12e ", region->pressure[h_idx][v_idx]);
+
+    fputs(
+        "\n\t\t\t\t</DataArray>\n"
+        "\t\t\t</CellData>\n"
+        "\t\t</Piece>\n"
+        "\t</RectilinearGrid>\n"
+        "</VTKFile>\n",
+
+        destination);
 }

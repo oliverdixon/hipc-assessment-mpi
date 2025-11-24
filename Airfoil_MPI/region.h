@@ -88,4 +88,6 @@ void region_print_flags(const struct region *region, FILE *destination);
 
 void region_initialise(const struct region *region, const struct instance *instance);
 
+void region_serialise_vtk(const struct region *region, FILE *destination);
+
 #endif // HIPC_ASSESSMENT_REGION_H
