@@ -54,7 +54,7 @@ SpacesInParentheses: false
 TabWidth: 4
 AllowShortFunctionsOnASingleLine: None
 PackConstructorInitializers: Never
-AlignAfterOpenBracket: DontAlign
+AlignAfterOpenBracket: AlwaysBreak
 BinPackArguments: true
 BinPackParameters: BinPack
 BreakInheritanceList: AfterComma

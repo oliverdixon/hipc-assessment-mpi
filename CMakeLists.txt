@@ -41,11 +41,11 @@ find_package(MPI REQUIRED COMPONENTS C)
 
 add_executable(Airfoil_MPI
         Airfoil_MPI/airfoil.c
-        Airfoil_MPI/airfoil.h
         Airfoil_MPI/region.c
         Airfoil_MPI/region.h
         Airfoil_MPI/instance.c
         Airfoil_MPI/instance.h
+        Airfoil_MPI/types.h
 )
 
 set_property(TARGET Airfoil_MPI PROPERTY CMAKE_C_STANDARD 11)

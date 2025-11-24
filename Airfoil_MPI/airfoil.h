@@ -1,8 +1,0 @@
-//
-// Created by od641 on 17/11/2025.
-//
-
-#ifndef HIPC_ASSESSMENT_AIRFOIL_H
-#define HIPC_ASSESSMENT_AIRFOIL_H
-
-#endif // HIPC_ASSESSMENT_AIRFOIL_H

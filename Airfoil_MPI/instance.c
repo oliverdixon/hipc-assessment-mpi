@@ -12,8 +12,8 @@ struct instance instance_create()
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &count);
 
-    int dims[] = { 0, 0 };
-    const int periods[] = { 0, 0 };
+    int dims[] = {0, 0};
+    const int periods[] = {0, 0};
     MPI_Comm cartesian_comm;
 
     MPI_Dims_create(count, 2, dims);
@@ -23,54 +23,46 @@ struct instance instance_create()
     MPI_Cart_coords(cartesian_comm, rank, 2, coords);
 
     const struct instance instance = {
-        .rank = rank,
-        .count = count,
-        .cartesian_comm = cartesian_comm,
+            .rank = rank,
+            .count = count,
+            .cartesian_comm = cartesian_comm,
 
-        .x_dim_extent = dims[0],
-        .y_dim_extent = dims[1],
+            .dim_extents.x = dims[0],
+            .dim_extents.y = dims[1],
 
-        .x_position = coords[0],
-        .y_position = coords[1],
+            .cartesian_pos.x = coords[0],
+            .cartesian_pos.y = coords[1],
 
-        .problem_width = 4.0f,
-        .problem_height = 1.0f,
-        .naca_specifier = {
-            .maximum_camber = 2,
-            .edge_distance = 4,
-            .maximum_thickness = 12
-        }
-    };
+            .problem_size.x = 4.0,
+            .problem_size.y = 1.0,
+            .naca_specifier = {.maximum_camber = 2, .edge_distance = 4, .maximum_thickness = 12}};
 
     return instance;
 }
 
 void instance_describe(const struct instance *instance, FILE *const destination)
 {
-    fprintf(destination, "Instance statistics:\n\t"
-                         "Rank: %d / %d\n\t"
-                         "Dimensions: (%d, %d)\n\t"
-                         "Cartesian co-ordinates: (%d, %d)\n\t"
-                         "Global problem size: (%lf, %lf)\n\t"
-                         "NACA specifier: %2d%1d%1d\n",
+    fprintf(destination,
+            "Instance statistics:\n\t"
+            "Rank: %d / %d\n\t"
+            "Dimensions: (%d, %d)\n\t"
+            "Cartesian co-ordinates: (%d, %d)\n\t"
+            "Global problem size: (%lf, %lf)\n\t"
+            "NACA specifier: %2d%1d%1d\n",
 
-                         instance->rank, instance->count - 1,
-                         instance->x_dim_extent, instance->y_dim_extent,
-                         instance->x_position, instance->y_position,
-                         instance->problem_width, instance->problem_height,
-                         instance->naca_specifier.maximum_camber, instance->naca_specifier.edge_distance,
-                            instance->naca_specifier.maximum_thickness);
+            instance->rank, instance->count - 1, instance->dim_extents.x, instance->dim_extents.y,
+            instance->cartesian_pos.x, instance->cartesian_pos.y, instance->problem_size.x, instance->problem_size.y,
+            instance->naca_specifier.maximum_camber, instance->naca_specifier.edge_distance,
+            instance->naca_specifier.maximum_thickness);
 }
 
 struct dim2 instance_get_indentations(const struct instance *instance, const struct dim2 own_size)
 {
     struct dim2 indents;
     const struct dim2 size = {
-        .x = instance->x_position == 0 ? 0 : own_size.x,
-        .y = instance->y_position == 0 ? 0 : own_size.y
-    };
+            .x = instance->cartesian_pos.x == 0 ? 0 : own_size.x, .y = instance->cartesian_pos.y == 0 ? 0 : own_size.y};
 
-    int fix_dimensions[] = { 1, 0 };
+    int fix_dimensions[] = {1, 0};
     MPI_Comm fixed_dim_comm;
     MPI_Cart_sub(instance->cartesian_comm, fix_dimensions, &fixed_dim_comm); // Fixed on X; row communicator.
     MPI_Scan(&size.x, &indents.x, 1, MPI_UNSIGNED, MPI_SUM, fixed_dim_comm);

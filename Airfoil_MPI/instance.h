@@ -8,7 +8,7 @@
 #include <mpi.h>
 #include <stdio.h>
 
-#include "region.h"
+#include "types.h"
 
 struct naca_specifier
 {
@@ -23,20 +23,16 @@ struct instance
     const int count;
     MPI_Comm cartesian_comm;
 
-    const int x_dim_extent;
-    const int y_dim_extent;
+    const struct dim2 dim_extents;
+    const struct dim2 cartesian_pos;
+    const struct compute_dim2 problem_size;
 
-    const int x_position;
-    const int y_position;
-
-    const float problem_width;
-    const float problem_height;
     const struct naca_specifier naca_specifier;
 };
 
 struct instance instance_create();
 
-void instance_describe(const struct instance *instance, FILE * destination);
+void instance_describe(const struct instance *instance, FILE *destination);
 
 struct dim2 instance_get_indentations(const struct instance *instance, struct dim2 own_size);
 
