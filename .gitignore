@@ -1,4 +1,5 @@
 /cmake-build-*
 **/out
 Airfoil_Original
-
+Airfoil_MPI/tmpi
+Airfoil_MPI/valgrind.supp

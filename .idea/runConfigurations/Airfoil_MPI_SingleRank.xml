@@ -2,6 +2,7 @@
   <configuration default="false" name="Airfoil_MPI_SingleRank" type="CMakeRunConfiguration" factoryName="Application" singleton="false" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" EMULATE_TERMINAL="false" WORKING_DIR="file://$PROJECT_DIR$/Airfoil_MPI" PASS_PARENT_ENVS_2="true" PROJECT_NAME="HIPC_Assessment" TARGET_NAME="Airfoil_MPI" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="HIPC_Assessment" RUN_TARGET_NAME="Airfoil_MPI">
     <envs>
       <env name="PSM2_CUDA" value="0" />
+      <env name="OMPI_MCA_orte_precondition_transports" value="13241234acffedeb-abcdefabcdef1233" />
     </envs>
     <method v="2">
       <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />

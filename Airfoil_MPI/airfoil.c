@@ -23,7 +23,7 @@ int main(int argc, char ** argv)
     char filename[16];
     snprintf(filename, 16, "out/%02d", instance.rank);
     FILE * fp = fopen(filename, "w");
-    region_print(&region, fp);
+    region_print_flags(&region, fp);
     fclose(fp);
 
     region_destroy(&region);

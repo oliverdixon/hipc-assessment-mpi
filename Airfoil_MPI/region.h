@@ -88,7 +88,7 @@ void region_destroy(struct region *region);
 
 void region_describe(const struct region * region, FILE * destination);
 
-void region_print(const struct region *region, FILE *destination);
+void region_print_flags(const struct region *region, FILE *destination);
 
 void region_initialise(const struct region * region, const struct instance * instance);
 

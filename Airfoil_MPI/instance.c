@@ -33,8 +33,8 @@ struct instance instance_create()
         .x_position = coords[0],
         .y_position = coords[1],
 
-        .problem_width = 1.0f,
-        .problem_height = .25f,
+        .problem_width = 4.0f,
+        .problem_height = 1.0f,
         .naca_specifier = {
             .maximum_camber = 2,
             .edge_distance = 4,

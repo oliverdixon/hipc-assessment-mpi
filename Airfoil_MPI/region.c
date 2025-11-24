@@ -5,13 +5,11 @@
 #include <assert.h>
 #include <limits.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "instance.h"
 #include "region.h"
-
-#include <stdbool.h>
 
 static double ** alloc_2d_double_array(const unsigned int column_count, const unsigned int row_count)
 {
@@ -223,39 +221,39 @@ static void halo_exchange(const struct region * const region, const struct insta
     MPI_Cart_shift(instance->cartesian_comm, 0, 1, &west_id, &east_id);
     MPI_Cart_shift(instance->cartesian_comm, 1, 1, &north_id, &south_id);
 
-    MPI_Request requests[2];
+    MPI_Request requests[4];
     int request_idx = 0;
     double dummy_ghost;
 
     // North
-    const double * const north_row = &region->velocity_x[region->h_exterior.begin][region->v_exterior.begin];
+    const double * const north_row = &region->velocity_x[0][region->v_exterior.begin];
     double * const north_ghost = north_id == MPI_PROC_NULL ? &dummy_ghost :
-        &region->velocity_x[region->h_exterior.begin][region->v_exterior.begin - 1];
+        &region->velocity_x[0][region->v_exterior.begin - 1];
 
-    MPI_Sendrecv(
+    MPI_Isendrecv(
         north_row, 1, region->row_t, north_id, 2,
         north_ghost, 1, region->row_t, north_id, 3,
-        instance->cartesian_comm, MPI_STATUS_IGNORE);
+        instance->cartesian_comm, &requests[request_idx++]);
 
     // South
-    const double * const south_row = &region->velocity_x[region->h_exterior.begin][region->v_exterior.end - 1];
+    const double * const south_row = &region->velocity_x[0][region->v_exterior.end - 1];
     double * const south_ghost = south_id == MPI_PROC_NULL ? &dummy_ghost :
-        &region->velocity_x[region->h_exterior.begin][region->v_exterior.end];
+        &region->velocity_x[0][region->v_exterior.end];
 
-    MPI_Sendrecv(
+    MPI_Isendrecv(
         south_row, 1, region->row_t, south_id, 3,
         south_ghost, 1, region->row_t, south_id, 2,
-        instance->cartesian_comm, MPI_STATUS_IGNORE);
+        instance->cartesian_comm, &requests[request_idx++]);
 
     // East
     const double * const east_column = region->velocity_x[region->h_exterior.end - 1];
     double * const east_ghost = east_id == MPI_PROC_NULL ? &dummy_ghost :
         region->velocity_x[region->h_exterior.end];
 
-    MPI_Sendrecv(
+    MPI_Isendrecv(
         east_column, 1, region->col_t, east_id, 0,
         east_ghost, 1, region->col_t, east_id, 1,
-        instance->cartesian_comm, MPI_STATUS_IGNORE
+        instance->cartesian_comm, &requests[request_idx++]
     );
 
     // West
@@ -263,13 +261,13 @@ static void halo_exchange(const struct region * const region, const struct insta
     double * const west_ghost = west_id == MPI_PROC_NULL ? &dummy_ghost :
         region->velocity_x[region->h_exterior.begin - 1];
 
-    MPI_Sendrecv(
+    MPI_Isendrecv(
         west_column, 1, region->col_t, west_id, 1,
         west_ghost, 1, region->col_t, west_id, 0,
-        instance->cartesian_comm, MPI_STATUS_IGNORE
+        instance->cartesian_comm, &requests[request_idx++]
     );
 
-    // MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
+    MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
 }
 
 struct region region_create(const struct instance * const instance)
@@ -292,52 +290,73 @@ struct region region_create(const struct instance * const instance)
     };
 
     enum region_flags region_flags = REGION_UNREMARKABLE;
-    bool ghosts_accounted = false;
+    bool x_ghosts_finalised = false;
+    bool y_ghosts_finalised = false;
 
     if (instance->x_dim_extent > 1) {
         if (instance->x_position == 0) {
+            /*
+             * Westernmost region with at least one region to the east; marks a west boundary, definitely requires an
+             * east ghost.
+             */
             region_flags |= REGION_WEST_BOUNDARY | REGION_EAST_GHOST;
             ++allocations.x;
-            ghosts_accounted = true;
+            x_ghosts_finalised = true;
         }
 
         if (instance->x_position == instance->x_dim_extent - 1) {
+            /*
+             * Easternmost region with at least one region to the west; marks an east boundary, definitely requires a
+             * west ghost. As the last region, also pick up any slack on the X axis.
+             */
             region_flags |= REGION_EAST_BOUNDARY | REGION_WEST_GHOST;
             cell_counts.x += global_cell_counts.x % instance->x_dim_extent;
             ++allocations.x;
-            ghosts_accounted = true;
+            x_ghosts_finalised = true;
         }
     } else {
-        region_flags |= REGION_EAST_BOUNDARY | REGION_WEST_BOUNDARY;
-        ghosts_accounted = true;
+        // Single region on the X. Marks west and east boundaries; thus doesn't require east or west ghosts.
+        region_flags |= REGION_WEST_BOUNDARY | REGION_EAST_BOUNDARY;
+        x_ghosts_finalised = true;
     }
 
     if (instance->y_dim_extent > 1) {
         if (instance->y_position == 0) {
+            /*
+             * Northernmost region with at least one region to the south; marks a north boundary, definitely requires a
+             * south ghost.
+             */
             region_flags |= REGION_NORTH_BOUNDARY | REGION_SOUTH_GHOST;
             ++allocations.y;
-            ghosts_accounted = true;
+            y_ghosts_finalised = true;
         }
 
         if (instance->y_position == instance->y_dim_extent - 1) {
+            /*
+             * Southernmost region with at least one region to the north; marks a south boundary, definitely requires a
+             * north ghost.
+             */
             region_flags |= REGION_SOUTH_BOUNDARY | REGION_NORTH_GHOST;
             cell_counts.y += global_cell_counts.y % instance->y_dim_extent;
             ++allocations.y;
-            ghosts_accounted = true;
+            y_ghosts_finalised = true;
         }
     } else {
+        // Single region on the Y. Marks north and south boundaries; thus doesn't require north or south ghosts.
         region_flags |= REGION_NORTH_BOUNDARY | REGION_SOUTH_BOUNDARY;
-        ghosts_accounted = true;
+        y_ghosts_finalised = true;
     }
 
-    if (!ghosts_accounted) {
-        const enum region_flags all_ghost_flags = REGION_NORTH_GHOST | REGION_WEST_GHOST | REGION_EAST_GHOST |
-            REGION_SOUTH_GHOST;
-        if (!(region_flags & all_ghost_flags)) {
-            region_flags |= all_ghost_flags;
-            allocations.x += 2;
-            allocations.y += 2;
-        }
+    if (!x_ghosts_finalised) {
+        // Multiple regions on the X, and we're in the middle.
+        region_flags |= REGION_WEST_GHOST | REGION_EAST_GHOST;
+        allocations.x += 2;
+    }
+
+    if (!y_ghosts_finalised) {
+        // Multiple regions on the Y, and we're in the middle.
+        region_flags |= REGION_NORTH_GHOST | REGION_SOUTH_GHOST;
+        allocations.y += 2;
     }
 
     const struct iterator h_exterior = {
@@ -434,11 +453,13 @@ void region_describe(const struct region * const region, FILE * const destinatio
                          region->indents.y);
 }
 
-void region_print(const struct region *const region, FILE *const destination)
+void region_print_flags(const struct region *const region, FILE *const destination)
 {
     for (unsigned int v_cell_idx = region->v_exterior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) {
-        for (unsigned int h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx)
+        for (unsigned int h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) {
             fputc(get_flag_identifier(region->flags[h_cell_idx][v_cell_idx]), destination);
+            fputc(' ', destination);
+        }
 
         fputc('\n', destination);
     }
@@ -471,13 +492,4 @@ void region_initialise(const struct region * const region, const struct instance
     }
 
     write_initial_extreme_boundaries(region);
-
-    // TODO: testing
-    halo_exchange(region, instance);
-
-    char filename[16];
-    snprintf(filename, 16, "out/g-%02d", instance->rank);
-    FILE * fp = fopen(filename, "w");
-    print_velocity_x(region, fp);
-    fclose(fp);
 }
