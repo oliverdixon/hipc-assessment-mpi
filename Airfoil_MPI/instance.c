@@ -33,8 +33,8 @@ struct instance instance_create()
         .x_position = coords[0],
         .y_position = coords[1],
 
-        .problem_width = 4.0f,
-        .problem_height = 1.0f,
+        .problem_width = 1.0f,
+        .problem_height = .25f,
         .naca_specifier = {
             .maximum_camber = 2,
             .edge_distance = 4,
@@ -60,4 +60,25 @@ void instance_describe(const struct instance *instance, FILE *const destination)
                          instance->problem_width, instance->problem_height,
                          instance->naca_specifier.maximum_camber, instance->naca_specifier.edge_distance,
                             instance->naca_specifier.maximum_thickness);
+}
+
+struct dim2 instance_get_indentations(const struct instance *instance, const struct dim2 own_size)
+{
+    struct dim2 indents;
+    const struct dim2 size = {
+        .x = instance->x_position == 0 ? 0 : own_size.x,
+        .y = instance->y_position == 0 ? 0 : own_size.y
+    };
+
+    int fix_dimensions[] = { 1, 0 };
+    MPI_Comm fixed_dim_comm;
+    MPI_Cart_sub(instance->cartesian_comm, fix_dimensions, &fixed_dim_comm); // Fixed on X; row communicator.
+    MPI_Scan(&size.x, &indents.x, 1, MPI_UNSIGNED, MPI_SUM, fixed_dim_comm);
+
+    fix_dimensions[0] = 0;
+    fix_dimensions[1] = 1;
+    MPI_Cart_sub(instance->cartesian_comm, fix_dimensions, &fixed_dim_comm); // Fixed on Y; column communicator.
+    MPI_Scan(&size.y, &indents.y, 1, MPI_UNSIGNED, MPI_SUM, fixed_dim_comm);
+
+    return indents;
 }

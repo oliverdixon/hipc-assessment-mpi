@@ -2,10 +2,16 @@
 // Created by od641 on 18/11/2025.
 //
 
+#include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include "instance.h"
 #include "region.h"
+
+#include <stdbool.h>
 
 static double ** alloc_2d_double_array(const unsigned int column_count, const unsigned int row_count)
 {
@@ -35,6 +41,34 @@ static void free_2d_array(void **array)
     free(array);
 }
 
+static MPI_Datatype create_row_t(const unsigned int column_count, const unsigned int row_count)
+{
+    assert(column_count <= INT_MAX);
+    assert(row_count <= INT_MAX);
+    
+    MPI_Datatype raw_row_t;
+    MPI_Type_vector((int) column_count, 1, (int) row_count, MPI_DOUBLE, &raw_row_t);
+    MPI_Type_commit(&raw_row_t);
+
+    MPI_Datatype row_t;
+    MPI_Type_create_resized(raw_row_t, 0, sizeof(double), &row_t);
+    MPI_Type_commit(&row_t);
+    MPI_Type_free(&raw_row_t);
+
+    return row_t;
+}
+
+static MPI_Datatype create_column_t(const unsigned int row_count)
+{
+    assert(row_count <= INT_MAX);
+    
+    MPI_Datatype column_t;
+    MPI_Type_contiguous((int) row_count, MPI_DOUBLE, &column_t);
+    MPI_Type_commit(&column_t);
+
+    return column_t;
+}
+
 static struct iterator get_initial_v_idx_boundaries(const struct region * const region, const double problem_height,
     const float maximum_camber, const float edge_distance, const float thickness, const unsigned h_cell_idx)
 {
@@ -47,7 +81,7 @@ static struct iterator get_initial_v_idx_boundaries(const struct region * const 
      * Position along chord, normalised to [0, 1]. From here, 'x' is translated into the co-ordinate space of the
      * global problem, and not the region.
      */
-    const double x = (float) (h_cell_idx + region->x_indent) / (float) region->resolution - 0.5f;
+    const double x = (float) (h_cell_idx + region->indents.x) / (float) region->resolution - 0.5f;
 
     if (x < 0.0 || x > 1.0)
         return boundaries;
@@ -87,9 +121,9 @@ static struct iterator get_initial_v_idx_boundaries(const struct region * const 
     unsigned int v_idx_boundary_start = floor((lower_camber_y + problem_height / 2.0) * region->resolution);
     unsigned int v_idx_boundary_end = ceil((upper_camber_y + problem_height / 2.0) * region->resolution);
 
-    const unsigned int south_boundary_idx = region->y_indent + (region->v_exterior.end - region->v_exterior.begin);
+    const unsigned int south_boundary_idx = region->indents.y + (region->v_exterior.end - region->v_exterior.begin);
 
-    if (v_idx_boundary_start < region->y_indent)
+    if (v_idx_boundary_start < region->indents.y)
         // If the start is a pixel in a region to the north of us, bound it at our northernmost point.
         v_idx_boundary_start = region->v_exterior.begin;
     else if (v_idx_boundary_start > south_boundary_idx)
@@ -97,17 +131,17 @@ static struct iterator get_initial_v_idx_boundaries(const struct region * const 
         return boundaries;
     else
         // Otherwise, the start-point is somewhere within our region. Translate the index to zero-based from the north.
-        v_idx_boundary_start -= region->y_indent;
+        v_idx_boundary_start -= region->indents.y;
 
     if (v_idx_boundary_end >= south_boundary_idx)
         // If the end is a pixel in a region to the south of us, bound it at our southernmost point.
         v_idx_boundary_end = region->v_exterior.end;
-    else if (v_idx_boundary_end < region->y_indent)
+    else if (v_idx_boundary_end < region->indents.y)
         // If the end is a pixel in a region to the north of us, this region doesn't contain any of the points.
         return boundaries;
     else
         // Otherwise, the end-point is somewhere within our region. Translate the index to zero-based from the north.
-        v_idx_boundary_end -= region->y_indent;
+        v_idx_boundary_end -= region->indents.y;
 
     boundaries.begin = v_idx_boundary_start;
     boundaries.end = v_idx_boundary_end;
@@ -135,76 +169,194 @@ static void write_initial_extreme_boundaries(const struct region * const region)
             flags[region->h_exterior.end - 1][v_cell_idx] = CELL_BOUNDARY;
 }
 
+static char get_flag_identifier(const enum cell_flags flag)
+{
+    if (flag & CELL_FLUID) return ' ';
+    if (flag & CELL_BOUNDARY) return 'B';
+
+    return '?';
+}
+
+static void print_velocity_x(const struct region * const region, FILE * const destination)
+{
+    const unsigned int h_cell_count = region->h_exterior.end - region->h_exterior.begin - 1;
+
+    for (unsigned int h_idx = 0; h_idx < h_cell_count; ++h_idx)
+        fputs("-----------", destination);
+    fputs("----------\n", destination);
+
+    if (region->region_flags & REGION_NORTH_GHOST) {
+        for (unsigned int h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%10lf ", region->velocity_x[h_idx][region->v_exterior.begin - 1]);
+        fputc('\n', destination);
+
+        for (unsigned int h_idx = 0; h_idx < h_cell_count; ++h_idx)
+            fputs("-----------", destination);
+        fputs("----------\n", destination);
+    }
+
+    for (unsigned int v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
+        if (region->region_flags & REGION_WEST_GHOST)
+            fprintf(destination, "%10lf | ", region->velocity_x[region->h_exterior.begin - 1][v_idx]);
+        for (unsigned int h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%10lf ", region->velocity_x[h_idx][v_idx]);
+        if (region->region_flags & REGION_EAST_GHOST)
+            fprintf(destination, " | %10lf", region->velocity_x[region->h_exterior.end][v_idx]);
+        fputc('\n', destination);
+    }
+
+    for (unsigned int h_idx = 0; h_idx < h_cell_count; ++h_idx)
+        fputs("-----------", destination);
+    fputs("----------", destination);
+
+    if (region->region_flags & REGION_SOUTH_GHOST) {
+        fputc('\n', destination);
+        for (unsigned int h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%10lf ", region->velocity_x[h_idx][region->v_exterior.end]);
+        fputc('\n', destination);
+    }
+}
+
+static void halo_exchange(const struct region * const region, const struct instance * const instance)
+{
+    int north_id, south_id, east_id, west_id;
+    MPI_Cart_shift(instance->cartesian_comm, 0, 1, &west_id, &east_id);
+    MPI_Cart_shift(instance->cartesian_comm, 1, 1, &north_id, &south_id);
+
+    MPI_Request requests[2];
+    int request_idx = 0;
+    double dummy_ghost;
+
+    // North
+    const double * const north_row = &region->velocity_x[region->h_exterior.begin][region->v_exterior.begin];
+    double * const north_ghost = north_id == MPI_PROC_NULL ? &dummy_ghost :
+        &region->velocity_x[region->h_exterior.begin][region->v_exterior.begin - 1];
+
+    MPI_Sendrecv(
+        north_row, 1, region->row_t, north_id, 2,
+        north_ghost, 1, region->row_t, north_id, 3,
+        instance->cartesian_comm, MPI_STATUS_IGNORE);
+
+    // South
+    const double * const south_row = &region->velocity_x[region->h_exterior.begin][region->v_exterior.end - 1];
+    double * const south_ghost = south_id == MPI_PROC_NULL ? &dummy_ghost :
+        &region->velocity_x[region->h_exterior.begin][region->v_exterior.end];
+
+    MPI_Sendrecv(
+        south_row, 1, region->row_t, south_id, 3,
+        south_ghost, 1, region->row_t, south_id, 2,
+        instance->cartesian_comm, MPI_STATUS_IGNORE);
+
+    // East
+    const double * const east_column = region->velocity_x[region->h_exterior.end - 1];
+    double * const east_ghost = east_id == MPI_PROC_NULL ? &dummy_ghost :
+        region->velocity_x[region->h_exterior.end];
+
+    MPI_Sendrecv(
+        east_column, 1, region->col_t, east_id, 0,
+        east_ghost, 1, region->col_t, east_id, 1,
+        instance->cartesian_comm, MPI_STATUS_IGNORE
+    );
+
+    // West
+    const double * const west_column = region->velocity_x[region->h_exterior.begin];
+    double * const west_ghost = west_id == MPI_PROC_NULL ? &dummy_ghost :
+        region->velocity_x[region->h_exterior.begin - 1];
+
+    MPI_Sendrecv(
+        west_column, 1, region->col_t, west_id, 1,
+        west_ghost, 1, region->col_t, west_id, 0,
+        instance->cartesian_comm, MPI_STATUS_IGNORE
+    );
+
+    // MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
+}
+
 struct region region_create(const struct instance * const instance)
 {
     static const unsigned int resolution = 128; // Number of cells per unit-distance.
 
-    const unsigned int global_h_cell_count = (unsigned int) ceilf((float) resolution * instance->problem_width);
-    const unsigned int global_v_cell_count = (unsigned int) ceilf((float) resolution * instance->problem_height);
+    const struct dim2 global_cell_counts = {
+        .x = (unsigned int) ceilf((float) resolution * instance->problem_width),
+        .y = (unsigned int) ceilf((float) resolution * instance->problem_height)
+    };
 
-    unsigned int h_cell_count = global_h_cell_count / instance->x_dim_extent;
-    unsigned int v_cell_count = global_v_cell_count / instance->y_dim_extent;
+    struct dim2 cell_counts = {
+        .x = global_cell_counts.x / instance->x_dim_extent,
+        .y = global_cell_counts.y / instance->y_dim_extent
+    };
+
+    struct dim2 allocations = {
+        .x = cell_counts.x,
+        .y = cell_counts.y
+    };
 
     enum region_flags region_flags = REGION_UNREMARKABLE;
+    bool ghosts_accounted = false;
 
-    if (instance->x_position == instance->x_dim_extent - 1) {
-        region_flags |= REGION_EAST_BOUNDARY;
-        h_cell_count += global_h_cell_count % instance->x_dim_extent;
+    if (instance->x_dim_extent > 1) {
+        if (instance->x_position == 0) {
+            region_flags |= REGION_WEST_BOUNDARY | REGION_EAST_GHOST;
+            ++allocations.x;
+            ghosts_accounted = true;
+        }
+
+        if (instance->x_position == instance->x_dim_extent - 1) {
+            region_flags |= REGION_EAST_BOUNDARY | REGION_WEST_GHOST;
+            cell_counts.x += global_cell_counts.x % instance->x_dim_extent;
+            ++allocations.x;
+            ghosts_accounted = true;
+        }
+    } else {
+        region_flags |= REGION_EAST_BOUNDARY | REGION_WEST_BOUNDARY;
+        ghosts_accounted = true;
     }
 
-    if (instance->y_position == instance->y_dim_extent - 1) {
-        region_flags |= REGION_SOUTH_BOUNDARY;
-        v_cell_count += global_v_cell_count % instance->y_dim_extent;
+    if (instance->y_dim_extent > 1) {
+        if (instance->y_position == 0) {
+            region_flags |= REGION_NORTH_BOUNDARY | REGION_SOUTH_GHOST;
+            ++allocations.y;
+            ghosts_accounted = true;
+        }
+
+        if (instance->y_position == instance->y_dim_extent - 1) {
+            region_flags |= REGION_SOUTH_BOUNDARY | REGION_NORTH_GHOST;
+            cell_counts.y += global_cell_counts.y % instance->y_dim_extent;
+            ++allocations.y;
+            ghosts_accounted = true;
+        }
+    } else {
+        region_flags |= REGION_NORTH_BOUNDARY | REGION_SOUTH_BOUNDARY;
+        ghosts_accounted = true;
     }
 
-    if (instance->x_position == 0)
-        region_flags |= REGION_WEST_BOUNDARY;
-
-    if (instance->y_position == 0)
-        region_flags |= REGION_NORTH_BOUNDARY;
+    if (!ghosts_accounted) {
+        const enum region_flags all_ghost_flags = REGION_NORTH_GHOST | REGION_WEST_GHOST | REGION_EAST_GHOST |
+            REGION_SOUTH_GHOST;
+        if (!(region_flags & all_ghost_flags)) {
+            region_flags |= all_ghost_flags;
+            allocations.x += 2;
+            allocations.y += 2;
+        }
+    }
 
     const struct iterator h_exterior = {
-        .begin = 0,
-        .end = h_cell_count
+        .begin = !!(region_flags & REGION_WEST_GHOST),
+        .end = cell_counts.x + !!(region_flags & REGION_WEST_GHOST)
     };
 
     const struct iterator v_exterior = {
-        .begin = 0,
-        .end = v_cell_count
+        .begin = !!(region_flags & REGION_NORTH_GHOST),
+        .end = cell_counts.y + !!(region_flags & REGION_NORTH_GHOST)
     };
 
-    /*
-     * Regions need to know their positions relative to the global problem space, such that co-ordinate transforms can
-     * be done before and after running the Navier-Stokes algorithms. An indent value (number of cells from (0, 0) in
-     * the global problem space) is sufficient, and can be collected by scanning over the horizontal and vertical axes
-     * for the 'X' and 'Y' indent values, respectively.
-     *
-     * Axes can be fixed by subsetting communications on their respective fixed dimensions, and calling MPI_Scan on the
-     * fixed-dimensional communicators. Note that the sub-Cartesian communicator produced by MPI_Cart_sub orders its
-     * constituent ranks, such that MPI_Scan will visit regions in the expected order.
-     */
-    unsigned int x_indent;
-    unsigned int y_indent;
-    const unsigned int local_x_indent = instance->x_position == 0 ? 0 : h_cell_count;
-    const unsigned int local_y_indent = instance->y_position == 0 ? 0 : v_cell_count;
-
-    int fix_dimensions[] = { 1, 0 };
-    MPI_Comm fixed_dim_comm;
-    MPI_Cart_sub(instance->cartesian_comm, fix_dimensions, &fixed_dim_comm); // Fixed on X; row communicator.
-    MPI_Scan(&local_x_indent, &x_indent, 1, MPI_UNSIGNED, MPI_SUM, fixed_dim_comm);
-
-    fix_dimensions[0] = 0;
-    fix_dimensions[1] = 1;
-    MPI_Cart_sub(instance->cartesian_comm, fix_dimensions, &fixed_dim_comm); // Fixed on Y; column communicator.
-    MPI_Scan(&local_y_indent, &y_indent, 1, MPI_UNSIGNED, MPI_SUM, fixed_dim_comm);
-
     const struct region region = {
-        .velocity_x = alloc_2d_double_array(h_cell_count, v_cell_count),
-        .velocity_y = alloc_2d_double_array(h_cell_count, v_cell_count),
-        .tentative_velocity_x = alloc_2d_double_array(h_cell_count, v_cell_count),
-        .tentative_velocity_y = alloc_2d_double_array(h_cell_count, v_cell_count),
-        .pressure = alloc_2d_double_array(h_cell_count, v_cell_count),
-        .flags = alloc_2d_flags_array(h_cell_count, v_cell_count),
+        .velocity_x = alloc_2d_double_array(allocations.x, allocations.y),
+        .velocity_y = alloc_2d_double_array(allocations.x, allocations.y),
+        .tentative_velocity_x = alloc_2d_double_array(allocations.x, allocations.y),
+        .tentative_velocity_y = alloc_2d_double_array(allocations.x, allocations.y),
+        .pressure = alloc_2d_double_array(allocations.x, allocations.y),
+        .flags = alloc_2d_flags_array(allocations.x, allocations.y),
 
         .region_flags = region_flags,
 
@@ -221,20 +373,25 @@ struct region region_create(const struct instance * const instance)
         .h_exterior = h_exterior,
         .v_exterior = v_exterior,
         .resolution = resolution,
-        .x_indent = x_indent,
-        .y_indent = y_indent,
+        .indents = instance_get_indentations(instance, cell_counts),
 
         .initial_velocity_x = 1.0,
         .initial_velocity_y = 0.0,
         .initial_pressure = 0.0,
-        .initial_flag = CELL_FLUID
-    };
+        .initial_flag = CELL_FLUID,
 
+        .row_t = create_row_t(allocations.x, allocations.y),
+        .col_t = create_column_t(allocations.y),
+    };
+    
     return region;
 }
 
-void region_destroy(const struct region *const region)
+void region_destroy(struct region *const region)
 {
+    MPI_Type_free(&region->col_t);
+    MPI_Type_free(&region->row_t);
+
     free_2d_array((void **) region->velocity_x);
     free_2d_array((void **) region->velocity_y);
     free_2d_array((void **) region->tentative_velocity_x);
@@ -250,6 +407,10 @@ void region_describe(const struct region * const region, FILE * const destinatio
                          "South boundary? %s\n\t"
                          "West boundary? %s\n\t"
                          "East boundary? %s\n\t"
+                         "North ghost? %s\n\t"
+                         "South ghost? %s\n\t"
+                         "West ghost? %s\n\t"
+                         "East ghost? %s\n\t"
                          "Horizontal interior: [%d, %d]\n\t"
                          "Vertical interior: [%d, %d]\n\t"
                          "Horizontal exterior: [%d, %d]\n\t"
@@ -261,33 +422,23 @@ void region_describe(const struct region * const region, FILE * const destinatio
                          region->region_flags & REGION_SOUTH_BOUNDARY ? "Yes" : "No",
                          region->region_flags & REGION_WEST_BOUNDARY ? "Yes" : "No",
                          region->region_flags & REGION_EAST_BOUNDARY ? "Yes" : "No",
+                         region->region_flags & REGION_NORTH_GHOST ? "Yes" : "No",
+                         region->region_flags & REGION_SOUTH_GHOST ? "Yes" : "No",
+                         region->region_flags & REGION_WEST_GHOST ? "Yes" : "No",
+                         region->region_flags & REGION_EAST_GHOST ? "Yes" : "No",
                          region->h_interior.begin, region->h_interior.end - 1,
                          region->v_interior.begin, region->v_interior.end - 1,
                          region->h_exterior.begin, region->h_exterior.end - 1,
                          region->v_exterior.begin, region->v_exterior.end - 1,
-                         region->x_indent,
-                         region->y_indent);
+                         region->indents.x,
+                         region->indents.y);
 }
 
 void region_print(const struct region *const region, FILE *const destination)
 {
     for (unsigned int v_cell_idx = region->v_exterior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) {
-        for (unsigned int h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) {
-            char identifier;
-
-            switch (region->flags[h_cell_idx][v_cell_idx]) {
-            case CELL_FLUID:
-                identifier = ' ';
-                break;
-            case CELL_BOUNDARY:
-                identifier = 'B';
-                break;
-            default:
-                identifier = '?';
-            }
-
-            fprintf(destination, "%c ", identifier);
-        }
+        for (unsigned int h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx)
+            fputc(get_flag_identifier(region->flags[h_cell_idx][v_cell_idx]), destination);
 
         fputc('\n', destination);
     }
@@ -303,7 +454,8 @@ void region_initialise(const struct region * const region, const struct instance
     for (unsigned int h_cell_idx = region->h_interior.begin; h_cell_idx < region->h_interior.end; ++h_cell_idx) {
         // Populate all cells' information matrices with fixed initial values.
         for (unsigned int v_cell_idx = region->v_interior.begin; v_cell_idx < region->v_interior.end; ++v_cell_idx) {
-            region->velocity_x[h_cell_idx][v_cell_idx] = region->initial_velocity_x;
+            // region->velocity_x[h_cell_idx][v_cell_idx] = region->initial_velocity_x; // TODO testing
+            region->velocity_x[h_cell_idx][v_cell_idx] = h_cell_idx + 1 + v_cell_idx + 1;
             region->velocity_y[h_cell_idx][v_cell_idx] = region->initial_velocity_y;
             region->pressure[h_cell_idx][v_cell_idx] = region->initial_pressure;
             region->flags[h_cell_idx][v_cell_idx] = region->initial_flag;
@@ -319,4 +471,13 @@ void region_initialise(const struct region * const region, const struct instance
     }
 
     write_initial_extreme_boundaries(region);
+
+    // TODO: testing
+    halo_exchange(region, instance);
+
+    char filename[16];
+    snprintf(filename, 16, "out/g-%02d", instance->rank);
+    FILE * fp = fopen(filename, "w");
+    print_velocity_x(region, fp);
+    fclose(fp);
 }

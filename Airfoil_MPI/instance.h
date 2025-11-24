@@ -8,6 +8,8 @@
 #include <mpi.h>
 #include <stdio.h>
 
+#include "region.h"
+
 struct naca_specifier
 {
     unsigned char maximum_camber;
@@ -35,5 +37,7 @@ struct instance
 struct instance instance_create();
 
 void instance_describe(const struct instance *instance, FILE * destination);
+
+struct dim2 instance_get_indentations(const struct instance *instance, struct dim2 own_size);
 
 #endif // HIPC_ASSESSMENT_INSTANCE_H

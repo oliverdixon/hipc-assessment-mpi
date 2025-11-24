@@ -5,16 +5,19 @@
 #ifndef HIPC_ASSESSMENT_REGION_H
 #define HIPC_ASSESSMENT_REGION_H
 
-#include "instance.h"
+#include <mpi.h>
+#include <stdio.h>
+
+struct instance;
 
 enum cell_flags
 {
-    CELL_BOUNDARY = 0, /**< Boundary cell */
+    CELL_BOUNDARY = 1, /**< Boundary cell */
 
-    CELL_FLUID_NORTH = 1, /**< Boundary cell with fluid to the north */
-    CELL_FLUID_SOUTH = 1 << 1, /**< Boundary cell with fluid to the south */
-    CELL_FLUID_WEST = 1 << 2, /**< Boundary cell with fluid to the west */
-    CELL_FLUID_EAST = 1 << 3, /**< Boundary cell with fluid to the east */
+    CELL_FLUID_NORTH = 1 << 1, /**< Boundary cell with fluid to the north */
+    CELL_FLUID_SOUTH = 1 << 2, /**< Boundary cell with fluid to the south */
+    CELL_FLUID_WEST = 1 << 3, /**< Boundary cell with fluid to the west */
+    CELL_FLUID_EAST = 1 << 4, /**< Boundary cell with fluid to the east */
 
     CELL_FLUID_NORTHWEST = CELL_FLUID_NORTH | CELL_FLUID_WEST,
     CELL_FLUID_SOUTHWEST = CELL_FLUID_SOUTH | CELL_FLUID_WEST,
@@ -22,7 +25,7 @@ enum cell_flags
     CELL_FLUID_SOUTHEAST = CELL_FLUID_SOUTH | CELL_FLUID_EAST,
     CELL_FLUID_ALL = CELL_FLUID_NORTH | CELL_FLUID_SOUTH | CELL_FLUID_EAST | CELL_FLUID_WEST,
 
-    CELL_FLUID = 1 << 4, /**< Fluid cell */
+    CELL_FLUID = 1 << 5, /**< Fluid cell */
 };
 
 enum region_flags
@@ -44,6 +47,12 @@ struct iterator
     unsigned int end;
 };
 
+struct dim2
+{
+    unsigned int x;
+    unsigned int y;
+};
+
 struct region
 {
     double * const * const velocity_x;
@@ -62,18 +71,20 @@ struct region
     const struct iterator v_exterior;
     const unsigned int resolution;
 
-    const unsigned int x_indent;
-    const unsigned int y_indent;
+    const struct dim2 indents;
 
     const double initial_velocity_x;
     const double initial_velocity_y;
     const double initial_pressure;
     const enum cell_flags initial_flag;
+
+    MPI_Datatype row_t;
+    MPI_Datatype col_t;
 };
 
 struct region region_create(const struct instance * instance);
 
-void region_destroy(const struct region *region);
+void region_destroy(struct region *region);
 
 void region_describe(const struct region * region, FILE * destination);
 

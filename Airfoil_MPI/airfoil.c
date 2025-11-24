@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "instance.h"
 #include "region.h"
 
 int main(int argc, char ** argv)
@@ -13,7 +14,7 @@ int main(int argc, char ** argv)
     MPI_Init(&argc, &argv);
 
     const struct instance instance = instance_create();
-    const struct region region = region_create(&instance);
+    struct region region = region_create(&instance);
 
     instance_describe(&instance, stderr);
     region_describe(&region, stderr);
