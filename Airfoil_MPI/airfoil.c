@@ -34,7 +34,7 @@ static void serialise(const struct instance * const instance, const struct regio
     char subfile_name[prefix_length + max_rank_digits + suffix_length + 1];
     sprintf(subfile_name, "%s%0*d%s", prefix, max_rank_digits, instance->rank, suffix);
     FILE * const subfile_fp = fopen(subfile_name, "w");
-    region_serialise_vtk(region, subfile_fp);
+    region_serialise_vtk(region, instance, subfile_fp);
     fclose(subfile_fp);
 }
 

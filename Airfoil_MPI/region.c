@@ -413,6 +413,7 @@ struct region region_create(const struct instance *const instance)
         .h_exterior = h_exterior,
         .v_exterior = v_exterior,
         .resolution = resolution,
+
         .indents = instance_get_indentations(instance, local_cell_counts),
 
         .initial_velocity_x = 1.0,
@@ -518,16 +519,14 @@ void region_initialise(const struct region *const region, const struct instance 
     write_initial_extreme_boundaries(region);
 }
 
-void region_serialise_vtk(const struct region * const region, FILE * const destination)
+void region_serialise_vtk(
+    const struct region *const region,
+    const struct instance *const instance,
+    FILE *const destination)
 {
     const struct dim2 size = {
         .x = region->h_exterior.end - region->h_exterior.begin,
         .y = region->v_exterior.end - region->v_exterior.begin
-    };
-
-    const struct dim2 scaled_size = {
-        .x = size.x + region->indents.x - 1,
-        .y = size.y + region->indents.y - 1
     };
 
     fprintf(destination,
@@ -537,28 +536,28 @@ void region_serialise_vtk(const struct region * const region, FILE * const desti
         "\t\t<Piece Extent=\"%u %u %u %u 0 0\">\n"
         "\t\t\t<Coordinates>\n",
 
-        region->indents.x, scaled_size.x,
-        region->indents.y, scaled_size.y,
-        region->indents.x, scaled_size.x,
-        region->indents.y, scaled_size.y);
+        region->indents.x, region->indents.x + size.x,
+        region->indents.y, region->indents.y + size.y,
+        region->indents.x, region->indents.x + size.x,
+        region->indents.y, region->indents.y + size.y);
 
     fprintf(destination, "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"X\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
         (compute_t) region->indents.x / region->resolution,
-        (compute_t) scaled_size.x / region->resolution);
+        (compute_t) (region->indents.x + size.x) / region->resolution);
 
     // Write out physical positions of X co-ordinates.
-    for (indexer_t h_idx = 0; h_idx < size.x; ++h_idx)
+    for (indexer_t h_idx = 0; h_idx <= size.x; ++h_idx)
         fprintf(destination, "%lf ", (compute_t) (h_idx + region->indents.x) / region->resolution);
 
     fprintf(destination, "\n\t\t\t\t</DataArray>\n"
                          "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Y\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
         (compute_t) region->indents.y / region->resolution,
-        (compute_t) scaled_size.y / region->resolution);
+        (compute_t) (region->indents.y + size.y) / region->resolution);
 
     // Write out physical positions of Y co-ordinates.
-    for (indexer_t v_idx = 0; v_idx < size.y; ++v_idx)
+    for (indexer_t v_idx = 0; v_idx <= size.y; ++v_idx)
         fprintf(destination, "%lf ", (compute_t) (v_idx + region->indents.y) / region->resolution);
 
     fputs(
@@ -566,29 +565,22 @@ void region_serialise_vtk(const struct region * const region, FILE * const desti
         "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Z\">\n"
         "0.0\n"
         "\t\t\t\t</DataArray>\n"
-        "\t\t\t</Coordinates>\n"
-        "\t\t\t<PointData Vectors=\"uv\">\n"
-        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"uv\" NumberOfComponents=\"3\">\n",
+        "\t\t\t</Coordinates>\n",
 
         destination);
 
-    // Write out velocity vectors.
-    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx)
-        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
-            fprintf(destination, "%.12e %.12e 0\n", region->velocity_x[h_idx][v_idx], region->velocity_y[h_idx][v_idx]);
-
     fputs(
-        "\t\t\t\t</DataArray>\n"
-        "\t\t\t</PointData>\n"
         "\t\t\t<CellData Scalars=\"p\">\n"
         "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"p\">\n",
 
         destination);
 
     // Write out pressure scalars.
-    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx)
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
         for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
-            fprintf(destination, "%.12e ", region->pressure[h_idx][v_idx]);
+            fprintf(destination, "%02d ", region->flags[h_idx][v_idx]);
+        fputc('\n', destination);
+    }
 
     fputs(
         "\n\t\t\t\t</DataArray>\n"

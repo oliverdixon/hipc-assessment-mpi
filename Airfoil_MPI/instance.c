@@ -41,8 +41,13 @@ static void collect_dimension_data(const struct instance *const instance, const 
     MPI_Request reqs[3];
     int request_idx = 0;
 
-    MPI_Igather(&region->indents, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0, instance->cartesian_comm,
-        &reqs[request_idx++]);
+    const struct dim2 indents_without_padding = {
+        .x = region->indents.x,
+        .y = region->indents.y
+    };
+
+    MPI_Igather(&indents_without_padding, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0,
+        instance->cartesian_comm, &reqs[request_idx++]);
 
     const indexer_t width = region->h_exterior.end - region->h_exterior.begin;
     MPI_Igather(&width, 1, MPI_UNSIGNED, widths, 1, MPI_UNSIGNED, 0, instance->cartesian_comm, &reqs[request_idx++]);
@@ -144,26 +149,23 @@ void instance_serialise_vtk(
         "<VTKFile type=\"PRectilinearGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
         "\t<PRectilinearGrid WholeExtent=\"0 %u 0 %u 0 0\" GhostLevel=\"0\">\n"
         "\t\t<PCoordinates>\n"
-        "\t\t\t<PDataArray type=\"Float64\" Name=\"X\" format=\"ascii\" />\n"
-        "\t\t\t<PDataArray type=\"Float64\" Name=\"Y\" format=\"ascii\" />\n"
-        "\t\t\t<PDataArray type=\"Float64\" Name=\"Z\" format=\"ascii\" />\n"
+        "\t\t\t<PDataArray type=\"Float64\" />\n"
+        "\t\t\t<PDataArray type=\"Float64\" />\n"
+        "\t\t\t<PDataArray type=\"Float64\" />\n"
         "\t\t</PCoordinates>\n"
-        "\t\t<PPointData Vectors=\"uv\">\n"
-        "\t\t\t<PDataArray type=\"Float64\" Name=\"uv\" NumberOfComponents=\"3\" format=\"ascii\" />\n"
-        "\t\t</PPointData>\n"
         "\t\t<PCellData Scalars=\"p\">\n"
-        "\t\t\t<PDataArray type=\"Float64\" Name=\"p\" format=\"ascii\" />\n"
+        "\t\t\t<PDataArray type=\"Float64\" Name=\"p\" />\n"
         "\t\t</PCellData>\n",
 
-        (unsigned int) instance->problem_size.x * region->resolution - 1,
-        (unsigned int) instance->problem_size.y * region->resolution - 1);
+        (unsigned int) instance->problem_size.x * region->resolution,
+        (unsigned int) instance->problem_size.y * region->resolution);
 
     for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id)
         fprintf(destination,
-            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%0*d%s\" />\n",
-            indents[rank_id].x, indents[rank_id].x + widths[rank_id] - 1,
-            indents[rank_id].y, indents[rank_id].y + heights[rank_id] - 1,
-            subfile_prefix, max_subfile_digits, rank_id, subfile_extension);
+            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%c%s\" />\n",
+            indents[rank_id].x, indents[rank_id].x + widths[rank_id],
+            indents[rank_id].y, indents[rank_id].y + heights[rank_id],
+            subfile_prefix, rank_id + 'A', subfile_extension); // TODO fix suffix
 
     fputs("\t</PRectilinearGrid>\n"
           "</VTKFile>\n", destination);
