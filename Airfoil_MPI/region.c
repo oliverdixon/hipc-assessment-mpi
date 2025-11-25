@@ -7,7 +7,6 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <stdint.h>
 
 #include "instance.h"
 #include "region.h"
@@ -347,7 +346,7 @@ static enum region_flags compute_region_flags(
     }
 
     // Verify that pole-wise boundaries and ghosts are mutually exclusive.
-    static const uint32_t mask = ~(~0U << (REGION_GHOST_START_POSITION - REGION_BOUNDARY_START_POSITION));
+    static const enum region_flags mask = ~(~0U << (REGION_GHOST_START_POSITION - REGION_BOUNDARY_START_POSITION));
     assert(!(((region_flags >> REGION_BOUNDARY_START_POSITION) & (region_flags >> REGION_GHOST_START_POSITION))
         & mask));
 
@@ -360,26 +359,43 @@ static enum region_flags compute_region_flags(
 
 struct region region_create(const struct instance *const instance)
 {
-    static const unsigned int resolution = 128; // Number of cells per unit-distance.
+    // Number of cells per unit-distance.
+    static const unsigned int resolution = 128;
 
+    // Scaled spatial dimensions by the resolution, to map problem size to problem cell counts.
     const struct dim2 global_cell_counts = {
         .x = (indexer_t) ceil((compute_t) resolution * instance->problem_size.x),
         .y = (indexer_t) ceil((compute_t) resolution * instance->problem_size.y)
     };
 
+    // Provisional region cell counts based on uniform distribution, plus a single unit to map cells to VTK points.
     struct dim2 local_cell_counts = {
-        .x = global_cell_counts.x / instance->dim_extents.x,
-        .y = global_cell_counts.y / instance->dim_extents.y
+        .x = global_cell_counts.x / instance->dim_extents.x + 1,
+        .y = global_cell_counts.y / instance->dim_extents.y + 1
     };
 
+    // Provisional sizes to allocate on the heap.
     struct dim2 allocations = {
         .x = local_cell_counts.x,
         .y = local_cell_counts.y
     };
 
+    /*
+     * Determine properties of the individual region according to its position within the problem space (based on
+     * location within the Cartesian virtual topology assigned by MPI). This updates the local cell counts and
+     * allocation requirements to their final values.
+     */
     const enum region_flags region_flags = compute_region_flags(instance, &global_cell_counts, &local_cell_counts,
         &allocations);
 
+    /*
+     * Compute exterior index iterator boundaries, shifting rightwards or downwards to accommodate west and north
+     * ghosts, respectively.
+     *
+     * N.B. East and south ghosts are represented at the end of their respective arrays, and are
+     * accounted for by the updated allocation counts. This provides the guarantee that solvers iterating over the
+     * interior of a region may safely index one place beyond the position of any interior cell in any direction.
+     */
     const struct iterator h_exterior = {
         .begin = !!(region_flags & REGION_WEST_GHOST),
         .end = local_cell_counts.x + !!(region_flags & REGION_WEST_GHOST)
@@ -400,6 +416,10 @@ struct region region_create(const struct instance *const instance)
 
         .region_flags = region_flags,
 
+        /*
+         * Compute interior index iterator boundaries, defined to be the respective exteriors minus any artificial
+         * spatial boundaries created by the problem specification.
+         */
         .h_interior = {
             .begin = h_exterior.begin + !!(region_flags & REGION_WEST_BOUNDARY),
             .end = h_exterior.end - !!(region_flags & REGION_EAST_BOUNDARY)
@@ -414,6 +434,7 @@ struct region region_create(const struct instance *const instance)
         .v_exterior = v_exterior,
         .resolution = resolution,
 
+        // Compute the region's absolute positioning within the problem space, required for the RB-SOL PDE solver.
         .indents = instance_get_indentations(instance, local_cell_counts),
 
         .initial_velocity_x = 1.0,
@@ -525,8 +546,17 @@ void region_serialise_vtk(
     FILE *const destination)
 {
     const struct dim2 size = {
-        .x = region->h_exterior.end - region->h_exterior.begin,
-        .y = region->v_exterior.end - region->v_exterior.begin
+        .x = region->h_exterior.end - region->h_exterior.begin - 1,
+        .y = region->v_exterior.end - region->v_exterior.begin - 1
+    };
+
+    /*
+     * Compute the indentations, shifted from the VTK point space into the cell space. This effect accumulates for each
+     * region over a dimension: one cell per region index.
+     */
+    const struct dim2 shifted_indents = {
+        .x = region->indents.x - instance->cartesian_pos.x,
+        .y = region->indents.y - instance->cartesian_pos.y
     };
 
     fprintf(destination,
@@ -536,40 +566,49 @@ void region_serialise_vtk(
         "\t\t<Piece Extent=\"%u %u %u %u 0 0\">\n"
         "\t\t\t<Coordinates>\n",
 
-        region->indents.x, region->indents.x + size.x,
-        region->indents.y, region->indents.y + size.y,
-        region->indents.x, region->indents.x + size.x,
-        region->indents.y, region->indents.y + size.y);
+        shifted_indents.x, shifted_indents.x + size.x,
+        shifted_indents.y, shifted_indents.y + size.y,
+        shifted_indents.x, shifted_indents.x + size.x,
+        shifted_indents.y, shifted_indents.y + size.y);
 
     fprintf(destination, "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"X\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
-        (compute_t) region->indents.x / region->resolution,
-        (compute_t) (region->indents.x + size.x) / region->resolution);
+        (compute_t) shifted_indents.x / region->resolution,
+        (compute_t) (shifted_indents.x + size.x - 1) / region->resolution);
 
     // Write out physical positions of X co-ordinates.
-    for (indexer_t h_idx = 0; h_idx <= size.x; ++h_idx)
-        fprintf(destination, "%lf ", (compute_t) (h_idx + region->indents.x) / region->resolution);
+    for (indexer_t h_idx = 0; h_idx < size.x; ++h_idx)
+        fprintf(destination, "%lf ", (compute_t) (h_idx + shifted_indents.x) / region->resolution);
 
     fprintf(destination, "\n\t\t\t\t</DataArray>\n"
                          "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Y\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
-        (compute_t) region->indents.y / region->resolution,
-        (compute_t) (region->indents.y + size.y) / region->resolution);
+        (compute_t) shifted_indents.y / region->resolution,
+        (compute_t) (shifted_indents.y + size.y - 1) / region->resolution);
 
     // Write out physical positions of Y co-ordinates.
-    for (indexer_t v_idx = 0; v_idx <= size.y; ++v_idx)
-        fprintf(destination, "%lf ", (compute_t) (v_idx + region->indents.y) / region->resolution);
+    for (indexer_t v_idx = 0; v_idx < size.y; ++v_idx)
+        fprintf(destination, "%lf ", (compute_t) (v_idx + shifted_indents.y) / region->resolution);
 
     fputs(
         "\n\t\t\t\t</DataArray>\n"
         "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Z\">\n"
         "0.0\n"
         "\t\t\t\t</DataArray>\n"
-        "\t\t\t</Coordinates>\n",
+        "\t\t\t</Coordinates>\n"
+        "\t\t\t<PointData Vectors=\"uv\">\n"
+        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"uv\" NumberOfComponents=\"3\">\n",
 
         destination);
 
+    // Write out velocity vectors.
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx)
+        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+            fprintf(destination, "%lf %lf 0\n", region->velocity_x[h_idx][v_idx], region->velocity_y[h_idx][v_idx]);
+
     fputs(
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</PointData>\n"
         "\t\t\t<CellData Scalars=\"p\">\n"
         "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"p\">\n",
 
@@ -578,7 +617,7 @@ void region_serialise_vtk(
     // Write out pressure scalars.
     for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
         for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
-            fprintf(destination, "%02d ", region->flags[h_idx][v_idx]);
+            fprintf(destination, "%lf  ", region->pressure[h_idx][v_idx]);
         fputc('\n', destination);
     }
 

@@ -18,7 +18,7 @@ static void serialise(const struct instance * const instance, const struct regio
     assert(instance->count < (int) powf(10, max_rank_digits));
 
     static const char prefix[] = "flows";
-    static const char suffix[] = ".vtr";
+    static const char suffix[] = "_00.vtr";
 
     chdir("./out/");
 

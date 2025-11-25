@@ -41,13 +41,8 @@ static void collect_dimension_data(const struct instance *const instance, const 
     MPI_Request reqs[3];
     int request_idx = 0;
 
-    const struct dim2 indents_without_padding = {
-        .x = region->indents.x,
-        .y = region->indents.y
-    };
-
-    MPI_Igather(&indents_without_padding, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0,
-        instance->cartesian_comm, &reqs[request_idx++]);
+    MPI_Igather(&region->indents, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0, instance->cartesian_comm,
+        &reqs[request_idx++]);
 
     const indexer_t width = region->h_exterior.end - region->h_exterior.begin;
     MPI_Igather(&width, 1, MPI_UNSIGNED, widths, 1, MPI_UNSIGNED, 0, instance->cartesian_comm, &reqs[request_idx++]);
@@ -153,6 +148,9 @@ void instance_serialise_vtk(
         "\t\t\t<PDataArray type=\"Float64\" />\n"
         "\t\t\t<PDataArray type=\"Float64\" />\n"
         "\t\t</PCoordinates>\n"
+        "\t\t<PPointData Vectors=\"uv\">\n"
+        "\t\t\t<PDataArray type=\"Float64\" Name=\"uv\" NumberOfComponents=\"3\" />\n"
+        "\t\t</PPointData>\n"
         "\t\t<PCellData Scalars=\"p\">\n"
         "\t\t\t<PDataArray type=\"Float64\" Name=\"p\" />\n"
         "\t\t</PCellData>\n",
@@ -160,12 +158,19 @@ void instance_serialise_vtk(
         (unsigned int) instance->problem_size.x * region->resolution,
         (unsigned int) instance->problem_size.y * region->resolution);
 
-    for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id)
+    for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id) {
+        if (indents[rank_id].x > 0)
+            --indents[rank_id].x;
+
+        if (indents[rank_id].y > 0)
+            --indents[rank_id].y;
+
         fprintf(destination,
-            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%c%s\" />\n",
-            indents[rank_id].x, indents[rank_id].x + widths[rank_id],
-            indents[rank_id].y, indents[rank_id].y + heights[rank_id],
-            subfile_prefix, rank_id + 'A', subfile_extension); // TODO fix suffix
+            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%02d%s\" />\n",
+            indents[rank_id].x, indents[rank_id].x + widths[rank_id] - 1,
+            indents[rank_id].y, indents[rank_id].y + heights[rank_id] - 1,
+            subfile_prefix, rank_id, subfile_extension);
+    }
 
     fputs("\t</PRectilinearGrid>\n"
           "</VTKFile>\n", destination);
