@@ -3,13 +3,22 @@
 //
 
 #include <assert.h>
-#include <limits.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <strings.h>
 
 #include "instance.h"
 #include "region.h"
+
+struct neighbours
+{
+    int north;
+    int east;
+    int south;
+    int west;
+};
 
 static compute_t **alloc_2d_compute_array(const struct dim2 size)
 {
@@ -218,50 +227,68 @@ static void print_velocity_x(const struct region *const region, FILE *const dest
     }
 }
 
-static void halo_exchange(const struct region *const region, const struct instance *const instance)
+static int hx_matrix(
+    const struct region *const region,
+    const MPI_Comm * comm,
+    const struct neighbours * neighbour_ranks,
+    void * const matrix,
+    MPI_Request* requests)
 {
-    int north_id, south_id, east_id, west_id;
-    MPI_Cart_shift(instance->cartesian_comm, 0, 1, &west_id, &east_id);
-    MPI_Cart_shift(instance->cartesian_comm, 1, 1, &north_id, &south_id);
-
-    MPI_Request requests[4];
+    const indexer_t matrix_stride = region->allocation_stride;
     int request_idx = 0;
-    compute_t dummy_ghost;
+    long dummy_ghost;
 
     // North
-    const compute_t *const north_row = &region->velocity_x[0][region->v_exterior.begin];
-    compute_t *const north_ghost =
-            north_id == MPI_PROC_NULL ? &dummy_ghost : &region->velocity_x[0][region->v_exterior.begin - 1];
+    const void *const north_row = &matrix[matrix_stride * region->v_exterior.begin];
+    void *const north_ghost = neighbour_ranks->north == MPI_PROC_NULL ? &dummy_ghost :
+        &matrix[matrix_stride * (region->v_exterior.begin - 1)];
 
     MPI_Isendrecv(
-            north_row, 1, region->row_t, north_id, 2, north_ghost, 1, region->row_t, north_id, 3,
-            instance->cartesian_comm, &requests[request_idx++]);
+            north_row, 1, region->row_t, neighbour_ranks->north, 2, north_ghost, 1, region->row_t,
+            neighbour_ranks->north, 3, *comm, &requests[request_idx++]);
 
     // South
-    const compute_t *const south_row = &region->velocity_x[0][region->v_exterior.end - 1];
-    compute_t *const south_ghost =
-            south_id == MPI_PROC_NULL ? &dummy_ghost : &region->velocity_x[0][region->v_exterior.end];
+    const void *const south_row = &matrix[matrix_stride * (region->v_exterior.end - 1)];
+    void *const south_ghost = neighbour_ranks->south == MPI_PROC_NULL ? &dummy_ghost :
+        &matrix[matrix_stride * region->v_exterior.end];
 
     MPI_Isendrecv(
-            south_row, 1, region->row_t, south_id, 3, south_ghost, 1, region->row_t, south_id, 2,
-            instance->cartesian_comm, &requests[request_idx++]);
+            south_row, 1, region->row_t, neighbour_ranks->south, 3, south_ghost, 1, region->row_t,
+            neighbour_ranks->south, 2, *comm, &requests[request_idx++]);
 
     // East
-    const compute_t *const east_column = region->velocity_x[region->h_exterior.end - 1];
-    compute_t *const east_ghost = east_id == MPI_PROC_NULL ? &dummy_ghost : region->velocity_x[region->h_exterior.end];
+    const void *const east_column = &matrix[region->h_exterior.end - 1];
+    void *const east_ghost = neighbour_ranks->east == MPI_PROC_NULL ? &dummy_ghost :
+        &matrix[region->h_exterior.end];
 
     MPI_Isendrecv(
-            east_column, 1, region->col_t, east_id, 0, east_ghost, 1, region->col_t, east_id, 1,
-            instance->cartesian_comm, &requests[request_idx++]);
+            east_column, 1, region->col_t, neighbour_ranks->east, 0, east_ghost, 1, region->col_t,
+            neighbour_ranks->east, 1, *comm, &requests[request_idx++]);
 
     // West
-    const compute_t *const west_column = region->velocity_x[region->h_exterior.begin];
-    compute_t *const west_ghost =
-            west_id == MPI_PROC_NULL ? &dummy_ghost : region->velocity_x[region->h_exterior.begin - 1];
+    const void *const west_column = &matrix[region->h_exterior.begin];
+    void *const west_ghost = neighbour_ranks->west == MPI_PROC_NULL ? &dummy_ghost :
+        &matrix[region->h_exterior.begin - 1];
 
     MPI_Isendrecv(
-            west_column, 1, region->col_t, west_id, 1, west_ghost, 1, region->col_t, west_id, 0,
-            instance->cartesian_comm, &requests[request_idx++]);
+            west_column, 1, region->col_t, neighbour_ranks->west, 1, west_ghost, 1, region->col_t,
+            neighbour_ranks->west, 0, *comm, &requests[request_idx++]);
+
+    return request_idx;
+}
+
+void region_halo_exchange(const struct region *const region, const struct instance *const instance)
+{
+    struct neighbours neighbour_ranks;
+    MPI_Cart_shift(instance->cartesian_comm, 0, 1, &neighbour_ranks.west, &neighbour_ranks.east);
+    MPI_Cart_shift(instance->cartesian_comm, 1, 1, &neighbour_ranks.north, &neighbour_ranks.south);
+
+    MPI_Request requests[8];
+    int request_idx = 0;
+
+    request_idx += hx_matrix(region, &instance->cartesian_comm, &neighbour_ranks, *region->velocity_x, requests);
+    request_idx += hx_matrix(region, &instance->cartesian_comm, &neighbour_ranks, *region->velocity_y, requests);
+    request_idx += hx_matrix(region, &instance->cartesian_comm, &neighbour_ranks, *region->pressure, requests);
 
     MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
 }
@@ -406,12 +433,13 @@ struct region region_create(const struct instance *const instance)
         .end = local_cell_counts.y + !!(region_flags & REGION_NORTH_GHOST)
     };
 
-    const struct region region = {
+    struct region region = {
         .velocity_x = alloc_2d_compute_array(allocations),
         .velocity_y = alloc_2d_compute_array(allocations),
         .tentative_velocity_x = alloc_2d_compute_array(allocations),
         .tentative_velocity_y = alloc_2d_compute_array(allocations),
         .pressure = alloc_2d_compute_array(allocations),
+        .poisson_source = alloc_2d_compute_array(allocations),
         .flags = alloc_2d_flags_array(allocations),
 
         .region_flags = region_flags,
@@ -445,6 +473,9 @@ struct region region_create(const struct instance *const instance)
         .row_t = create_row_t(allocations.x, allocations.y),
         .col_t = create_column_t(allocations.y),
     };
+
+    region.fluid_cell_count = (region.h_interior.end - region.h_interior.begin) *
+        (region.v_interior.end - region.v_interior.begin);
 
     assert(h_exterior.end <= allocations.x);
     assert(v_exterior.end <= allocations.y);
@@ -500,6 +531,386 @@ void region_describe(const struct region *const region, FILE *const destination)
             region->indents.y);
 }
 
+void region_apply_boundary_conditions(const struct region *const region)
+{
+    compute_t *const *const velocity_x = region->velocity_x;
+    compute_t *const *const velocity_y = region->velocity_y;
+    enum cell_flags *const *const flags = region->flags;
+
+    for (indexer_t v_cell_idx = region->v_exterior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) {
+        // Fluid freely flows in from the west
+        velocity_x[region->h_exterior.begin][v_cell_idx] = velocity_x[region->h_exterior.begin + 1][v_cell_idx];
+        velocity_y[region->h_exterior.begin][v_cell_idx] = velocity_y[region->h_exterior.begin + 1][v_cell_idx];
+
+        // Fluid freely flows out to the east
+        velocity_x[region->h_exterior.end - 2][v_cell_idx] = velocity_x[region->h_exterior.end - 3][v_cell_idx];
+        velocity_y[region->h_exterior.end - 1][v_cell_idx] = velocity_y[region->h_exterior.end - 2][v_cell_idx];
+    }
+
+    for (indexer_t h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) {
+        /* The vertical velocity approaches 0 at the north and south
+         * boundaries, but fluid flows freely in the horizontal direction */
+        velocity_y[h_cell_idx][region->v_exterior.end - 2] = 0.0;
+        velocity_x[h_cell_idx][region->v_exterior.end - 1] = velocity_x[h_cell_idx][region->v_exterior.end - 2];
+
+        velocity_y[h_cell_idx][region->v_exterior.begin] = 0.0;
+        velocity_x[h_cell_idx][region->v_exterior.begin] = velocity_x[h_cell_idx][region->v_exterior.begin + 1];
+    }
+
+    /*
+     * Apply no-slip boundary conditions to cells that are adjacent to internal obstacle cells. This forces the
+     * velocities to tend towards zero in these cells.
+     */
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+            if (flags[h_idx][v_idx] & CELL_FLUID_ALL)
+                switch (flags[h_idx][v_idx]) {
+                case CELL_FLUID_NORTH:
+                    velocity_y[h_idx][v_idx] = 0.0;
+                    velocity_x[h_idx][v_idx] = -velocity_x[h_idx][v_idx + 1];
+                    velocity_x[h_idx - 1][v_idx] = -velocity_x[h_idx - 1][v_idx + 1];
+                    break;
+                case CELL_FLUID_EAST:
+                    velocity_x[h_idx][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx] = -velocity_y[h_idx + 1][v_idx];
+                    velocity_y[h_idx][v_idx - 1] = -velocity_y[h_idx + 1][v_idx - 1];
+                    break;
+                case CELL_FLUID_SOUTH:
+                    velocity_y[h_idx][v_idx - 1] = 0.0;
+                    velocity_x[h_idx][v_idx] = -velocity_x[h_idx][v_idx - 1];
+                    velocity_x[h_idx - 1][v_idx] = -velocity_x[h_idx - 1][v_idx - 1];
+                    break;
+                case CELL_FLUID_WEST:
+                    velocity_x[h_idx - 1][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx] = -velocity_y[h_idx - 1][v_idx];
+                    velocity_y[h_idx][v_idx - 1] = -velocity_y[h_idx - 1][v_idx - 1];
+                    break;
+                case CELL_FLUID_NORTHEAST:
+                    velocity_y[h_idx][v_idx] = 0.0;
+                    velocity_x[h_idx][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx - 1] = -velocity_y[h_idx + 1][v_idx - 1];
+                    velocity_x[h_idx - 1][v_idx] = -velocity_x[h_idx - 1][v_idx + 1];
+                    break;
+                case CELL_FLUID_SOUTHEAST:
+                    velocity_y[h_idx][v_idx - 1] = 0.0;
+                    velocity_x[h_idx][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx] = -velocity_y[h_idx + 1][v_idx];
+                    velocity_x[h_idx - 1][v_idx] = -velocity_x[h_idx - 1][v_idx - 1];
+                    break;
+                case CELL_FLUID_SOUTHWEST:
+                    velocity_y[h_idx][v_idx - 1] = 0.0;
+                    velocity_x[h_idx - 1][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx] = -velocity_y[h_idx - 1][v_idx];
+                    velocity_x[h_idx][v_idx] = -velocity_x[h_idx][v_idx - 1];
+                    break;
+                case CELL_FLUID_NORTHWEST:
+                    velocity_y[h_idx][v_idx] = 0.0;
+                    velocity_x[h_idx - 1][v_idx] = 0.0;
+                    velocity_y[h_idx][v_idx - 1] = -velocity_y[h_idx - 1][v_idx - 1];
+                    velocity_x[h_idx][v_idx] = -velocity_x[h_idx][v_idx + 1];
+                    break;
+                default:;
+                }
+
+    // Finally, fix the horizontal velocity at the western edge to have a continual flow of fluid into the simulation.
+    velocity_y[region->h_exterior.begin][region->v_exterior.begin] =
+            2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][region->v_exterior.begin];
+
+    for (indexer_t v_cell_idx = region->v_interior.begin; v_cell_idx < region->v_interior.end; ++v_cell_idx) {
+        velocity_x[region->h_exterior.begin][v_cell_idx] = region->initial_velocity_x;
+        velocity_y[region->h_exterior.begin][v_cell_idx] =
+                2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][v_cell_idx];
+    }
+}
+
+static void update_velocities(const struct region * const region)
+{
+    /*
+     * The pressure differential factors are the constants implied by the discretisation of the momentum equation. They
+     * represent fixed-axis grid spacings, warped by the timestep duration, to numerically approximate the next velocity
+     * values in terms of the computed pressures.
+     */
+    const compute_t x_pressure_diff_factor = 0.003 * region->resolution; // TODO timestep duration
+    const compute_t y_pressure_diff_factor = 0.003 * region->resolution;
+
+    // TODO room for optimisation here.  Why iterator over everything twice?  Bounds are only slightly different.
+    indexer_t h_bound = region->h_interior.end - 4;
+    indexer_t v_bound = region->v_interior.end - 3;
+
+    // X velocities
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
+            if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx + 1][v_idx] & CELL_FLUID)
+                region->velocity_x[h_idx][v_idx] = region->tentative_velocity_x[h_idx][v_idx] -
+                    (region->pressure[h_idx + 1][v_idx] - region->pressure[h_idx][v_idx]) * x_pressure_diff_factor;
+
+    h_bound = region->h_interior.end - 3;
+    v_bound = region->v_interior.end - 4;
+
+    // Y velocities
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
+            if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx][v_idx + 1] & CELL_FLUID)
+                region->velocity_y[h_idx][v_idx] = region->tentative_velocity_y[h_idx][v_idx] -
+                    (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
+}
+
+static void compute_tentative_velocities(const struct region * const region)
+{
+    static const double gamma = 0.9; // Upwind differencing factor in PDE discretisation
+
+    compute_t * const * const velocity_x = region->velocity_x;
+    compute_t * const * const velocity_y = region->velocity_y;
+    compute_t * const * const tentative_velocity_x = region->tentative_velocity_x;
+    compute_t * const * const tentative_velocity_y = region->tentative_velocity_y;
+    enum cell_flags * const * const flags = region->flags;
+
+    static const compute_t timestep_duration = 0.003; // TODO move into struct
+    static const compute_t reynolds = 500.0;
+
+    const compute_t x_grid_spacing = 1.0 / region->resolution; // TODO not this
+    const compute_t y_grid_spacing = 1.0 / region->resolution;
+
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) { // TODO check
+            if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx + 1][v_idx] & CELL_FLUID) {
+
+                const double self_advection_x =
+                    (
+                        (velocity_x[h_idx][v_idx] + velocity_x[h_idx + 1][v_idx]) *
+                        (velocity_x[h_idx][v_idx] + velocity_x[h_idx + 1][v_idx]) +
+                        gamma * fabs(velocity_x[h_idx][v_idx] + velocity_x[h_idx + 1][v_idx]) *
+                        (velocity_x[h_idx][v_idx] - velocity_x[h_idx + 1][v_idx]) -
+                        (velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx][v_idx]) *
+                        (velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx][v_idx]) -
+                        gamma * fabs(velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx][v_idx]) *
+                        (velocity_x[h_idx - 1][v_idx] - velocity_x[h_idx][v_idx])
+                    ) /
+                        (4.0 * x_grid_spacing);
+
+                const double cross_advection_y =
+                    (
+                        (velocity_y[h_idx][v_idx] + velocity_y[h_idx + 1][v_idx]) *
+                        (velocity_x[h_idx][v_idx] + velocity_x[h_idx][v_idx + 1]) +
+                        gamma * fabs(velocity_y[h_idx][v_idx] + velocity_y[h_idx + 1][v_idx]) *
+                        (velocity_x[h_idx][v_idx] - velocity_x[h_idx][v_idx + 1]) -
+                        (velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx + 1][v_idx - 1]) *
+                        (velocity_x[h_idx][v_idx - 1] + velocity_x[h_idx][v_idx]) -
+                        gamma * fabs(velocity_y[h_idx][v_idx - 1] +
+                            velocity_y[h_idx + 1][v_idx - 1]) *
+                        (velocity_x[h_idx][v_idx - 1] - velocity_x[h_idx][v_idx])
+                    ) /
+                        (4.0 * y_grid_spacing);
+
+                const double diffusion =
+                    (
+                        velocity_x[h_idx + 1][v_idx] -
+                        2.0 * velocity_x[h_idx][v_idx] +
+                        velocity_x[h_idx - 1][v_idx]
+                    ) /
+                        (x_grid_spacing * x_grid_spacing) +
+                    (
+                        velocity_x[h_idx][v_idx + 1] -
+                        2.0 * velocity_x[h_idx][v_idx] +
+                        velocity_x[h_idx][v_idx - 1]
+                    ) /
+                        (y_grid_spacing * y_grid_spacing);
+
+                tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx] + timestep_duration *
+                    (diffusion / reynolds - self_advection_x - cross_advection_y);
+
+            } else
+                // If both adjacent cells are not fluids, the velocity is unchanged.
+                tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx];
+        }
+
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+            if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx][v_idx + 1] & CELL_FLUID) {
+
+                const double cross_advection_x =
+                    (
+                        (velocity_x[h_idx][v_idx] + velocity_x[h_idx][v_idx + 1]) *
+                        (velocity_y[h_idx][v_idx] + velocity_y[h_idx + 1][v_idx]) +
+                        gamma * fabs(velocity_x[h_idx][v_idx] + velocity_x[h_idx][v_idx + 1]) *
+                        (velocity_y[h_idx][v_idx] - velocity_y[h_idx + 1][v_idx]) -
+                        (velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx - 1][v_idx + 1]) *
+                        (velocity_y[h_idx - 1][v_idx] + velocity_y[h_idx][v_idx]) -
+                        gamma * fabs(velocity_x[h_idx - 1][v_idx] +
+                            velocity_x[h_idx - 1][v_idx + 1]) *
+                        (velocity_y[h_idx - 1][v_idx] - velocity_y[h_idx][v_idx])
+                    ) /
+                        (4.0 * x_grid_spacing);
+
+                const double self_advection_y =
+                    (
+                        (velocity_y[h_idx][v_idx] + velocity_y[h_idx][v_idx + 1]) *
+                        (velocity_y[h_idx][v_idx] + velocity_y[h_idx][v_idx + 1]) +
+                        gamma * fabs(velocity_y[h_idx][v_idx] + velocity_y[h_idx][v_idx + 1]) *
+                        (velocity_y[h_idx][v_idx] - velocity_y[h_idx][v_idx + 1]) -
+                        (velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx][v_idx]) *
+                        (velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx][v_idx]) -
+                        gamma * fabs(velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx][v_idx]) *
+                        (velocity_y[h_idx][v_idx - 1] - velocity_y[h_idx][v_idx])
+                    ) /
+                        (4.0 * y_grid_spacing);
+
+                const double diffusion =
+                    (
+                        velocity_y[h_idx + 1][v_idx] -
+                        2.0 * velocity_y[h_idx][v_idx] +
+                        velocity_y[h_idx - 1][v_idx]
+                    ) /
+                        (x_grid_spacing * x_grid_spacing) +
+                    (
+                        velocity_y[h_idx][v_idx + 1] -
+                        2.0 * velocity_y[h_idx][v_idx] +
+                        velocity_y[h_idx][v_idx - 1]
+                    ) /
+                        (y_grid_spacing * y_grid_spacing);
+
+                tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx] + timestep_duration *
+                    (diffusion / reynolds - cross_advection_x - self_advection_y);
+
+            } else
+                // If both adjacent cells are not fluids, the velocity is unchanged.
+                tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx];
+        }
+
+    // Tentative velocities along extreme vertical boundaries.
+    for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) { // TODO check
+        tentative_velocity_x[region->h_exterior.begin][v_idx] = velocity_x[region->h_exterior.begin][v_idx];
+        tentative_velocity_x[region->h_interior.end - 1][v_idx] = velocity_x[region->h_interior.end - 1][v_idx];
+    }
+
+    // Tentative velocities along extreme horizontal boundaries.
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) { // TODO check
+        tentative_velocity_y[h_idx][region->v_exterior.begin] = velocity_y[h_idx][region->v_exterior.begin];
+        tentative_velocity_y[h_idx][region->v_interior.end - 1] = velocity_y[h_idx][region->v_interior.end - 1];
+    }
+}
+
+static void compute_poisson_source(const struct region * const region)
+{
+    compute_t * const * const tentative_velocity_x = region->tentative_velocity_x;
+    compute_t * const * const tentative_velocity_y = region->tentative_velocity_y;
+    compute_t * const * const poisson_source = region->poisson_source;
+    enum cell_flags * const * const flags = region->flags;
+
+    static const compute_t timestep_duration = 0.003; // TODO move into struct
+    
+    for (indexer_t h_cell_idx = region->h_interior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) // TODO check
+        for (indexer_t v_cell_idx = region->v_interior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) // TODO check
+            if (flags[h_cell_idx][v_cell_idx] & CELL_FLUID) {
+                const compute_t x_tent_vel_diff = (tentative_velocity_x[h_cell_idx][v_cell_idx] -
+                    tentative_velocity_x[h_cell_idx - 1][v_cell_idx]) * region->resolution;
+
+                const compute_t y_tent_vel_diff = (tentative_velocity_y[h_cell_idx][v_cell_idx] -
+                    tentative_velocity_y[h_cell_idx][v_cell_idx - 1]) * region->resolution;
+
+                poisson_source[h_cell_idx][v_cell_idx] = (x_tent_vel_diff + y_tent_vel_diff) / timestep_duration;
+            }
+}
+
+static compute_t compute_pressure(const struct region * const region)
+{
+    static const indexer_t itermax = 100; // Maximum number of iterations in SOR
+    static const compute_t epsilon = 0.001; // Stopping error threshold for SOR
+    static const compute_t omega = 1.7; // Relaxation parameter for SOR
+
+    compute_poisson_source(region);
+
+    const compute_t rdx2 = region->resolution * region->resolution;
+    const compute_t rdy2 = region->resolution * region->resolution; // TODO don't need different resolutions for dimensions
+    const compute_t beta_2 = -omega / (2.0 * (rdx2 + rdy2));
+
+    compute_t * const * const pressure = region->pressure;
+    compute_t * const * const poisson_source = region->poisson_source;
+    enum cell_flags * const * const flags = region->flags;
+
+    compute_t p0 = 0.0;
+
+    /* Calculate sum of squares */
+    for (indexer_t h_idx = 1; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+        for (indexer_t v_idx = 1; v_idx < region->v_exterior.end; ++v_idx) // TODO check
+            if (flags[h_idx][v_idx] & CELL_FLUID)
+                p0 += pressure[h_idx][v_idx] * pressure[h_idx][v_idx];
+
+    p0 = sqrt(p0 / region->fluid_cell_count);
+    if (p0 < 0.0001)
+        p0 = 1.0;
+
+    /* Red/Black SOR-iteration */
+
+    compute_t residual = 0.0;
+
+    for (indexer_t iteration = 0; iteration < itermax; ++iteration) {
+        for (indexer_t rb = 0; rb < 2; rb++)
+            for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+                for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end;
+                     ++v_idx) { // TODO check
+                    if ((h_idx + v_idx) % 2 != rb)
+                        continue;
+
+                    if (flags[h_idx][v_idx] == (CELL_FLUID | CELL_FLUID_ALL)) {
+                        /* five point star for interior fluid cells */
+                        pressure[h_idx][v_idx] = (1.0 - omega) * pressure[h_idx][v_idx] -
+                                beta_2 *
+                                        ((pressure[h_idx + 1][v_idx] + pressure[h_idx - 1][v_idx]) * rdx2 +
+                                         (pressure[h_idx][v_idx + 1] + pressure[h_idx][v_idx - 1]) * rdy2 -
+                                         poisson_source[h_idx][v_idx]);
+
+                    } else if (flags[h_idx][v_idx] & CELL_FLUID) {
+                        /* modified star near boundary */
+
+                        const compute_t epsilon_east = !!(flags[h_idx + 1][v_idx] & CELL_FLUID);
+                        const compute_t epsilon_west = !!(flags[h_idx - 1][v_idx] & CELL_FLUID);
+                        const compute_t epsilon_north = !!(flags[h_idx][v_idx + 1] & CELL_FLUID);
+                        const compute_t epsilon_south = !!(flags[h_idx][v_idx - 1] & CELL_FLUID);
+
+                        const compute_t beta_mod = -omega /
+                                ((epsilon_east + epsilon_west) * rdx2 + (epsilon_north + epsilon_south) * rdy2);
+                        pressure[h_idx][v_idx] = (1.0 - omega) * pressure[h_idx][v_idx] -
+                                beta_mod *
+                                        ((epsilon_east * pressure[h_idx + 1][v_idx] +
+                                          epsilon_west * pressure[h_idx - 1][v_idx]) *
+                                                 rdx2 +
+                                         (epsilon_north * pressure[h_idx][v_idx + 1] +
+                                          epsilon_south * pressure[h_idx][v_idx - 1]) *
+                                                 rdy2 -
+                                         poisson_source[h_idx][v_idx]);
+                    }
+                }
+
+        // Compute the Laplacian residual over fluid cells.
+
+        for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+            for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) // TODO check
+                if (flags[h_idx][v_idx] & CELL_FLUID) {
+
+                    const compute_t epsilon_east = !!(flags[h_idx + 1][v_idx] & CELL_FLUID);
+                    const compute_t epsilon_west = !!(flags[h_idx - 1][v_idx] & CELL_FLUID);
+                    const compute_t epsilon_north = !!(flags[h_idx][v_idx + 1] & CELL_FLUID);
+                    const compute_t epsilon_south = !!(flags[h_idx][v_idx - 1] & CELL_FLUID);
+
+                    const compute_t x_add = epsilon_east * (pressure[h_idx + 1][v_idx] - pressure[h_idx][v_idx]) -
+                            epsilon_west * (pressure[h_idx][v_idx] - pressure[h_idx - 1][v_idx]);
+
+                    const compute_t y_add = epsilon_north * (pressure[h_idx][v_idx + 1] - pressure[h_idx][v_idx]) -
+                        epsilon_south * (pressure[h_idx][v_idx] - pressure[h_idx][v_idx - 1]);
+
+                    const compute_t residual_summand = x_add * rdx2 + y_add * rdy2 - poisson_source[h_idx][v_idx];
+                    residual += residual_summand * residual_summand;
+                }
+
+        residual = sqrt(residual / region->fluid_cell_count) / p0;
+        if (residual < epsilon)
+            break; // The residual has converged.
+    }
+
+    return residual;
+}
+
 void region_print_flags(const struct region *const region, FILE *const destination)
 {
     for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
@@ -512,16 +923,16 @@ void region_print_flags(const struct region *const region, FILE *const destinati
     }
 }
 
-void region_initialise(const struct region *const region, const struct instance *const instance)
+void region_initialise(struct region *const region, const struct instance *const instance)
 {
     // Transform the NACA digits into the scale expected by the initial boundary calculi.
     const float maximum_camber = (float) instance->naca_specifier.maximum_camber / 100.0f;
     const float edge_distance = (float) instance->naca_specifier.edge_distance / 10.0f;
     const float thickness = (float) instance->naca_specifier.maximum_thickness / 100.0f;
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx) {
+    for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx) {
         // Populate all cells' information matrices with fixed initial values.
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+        for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
             region->velocity_x[h_idx][v_idx] = region->initial_velocity_x;
             region->velocity_y[h_idx][v_idx] = region->initial_velocity_y;
             region->pressure[h_idx][v_idx] = region->initial_pressure;
@@ -538,6 +949,24 @@ void region_initialise(const struct region *const region, const struct instance 
     }
 
     write_initial_extreme_boundaries(region);
+
+    // Mask in additional directional indicator flags for non-fluid cells, describing presence of nearby fluid cells.
+    enum cell_flags * const * const flags = region->flags;
+
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+            if (!(flags[h_idx][v_idx] & CELL_FLUID)) {
+                --region->fluid_cell_count;
+
+                if (flags[h_idx - 1][v_idx] & CELL_FLUID)
+                    flags[h_idx][v_idx] |= CELL_FLUID_WEST;
+                if (flags[h_idx + 1][v_idx] & CELL_FLUID)
+                    flags[h_idx][v_idx] |= CELL_FLUID_EAST;
+                if (flags[h_idx][v_idx - 1] & CELL_FLUID)
+                    flags[h_idx][v_idx] |= CELL_FLUID_SOUTH;
+                if (flags[h_idx][v_idx + 1] & CELL_FLUID)
+                    flags[h_idx][v_idx] |= CELL_FLUID_NORTH;
+            }
 }
 
 void region_serialise_vtk(
@@ -545,18 +974,10 @@ void region_serialise_vtk(
     const struct instance *const instance,
     FILE *const destination)
 {
+    const struct dim2 shifted_indents = instance_translate_to_cells(instance, &region->indents);
     const struct dim2 size = {
         .x = region->h_exterior.end - region->h_exterior.begin - 1,
         .y = region->v_exterior.end - region->v_exterior.begin - 1
-    };
-
-    /*
-     * Compute the indentations, shifted from the VTK point space into the cell space. This effect accumulates for each
-     * region over a dimension: one cell per region index.
-     */
-    const struct dim2 shifted_indents = {
-        .x = region->indents.x - instance->cartesian_pos.x,
-        .y = region->indents.y - instance->cartesian_pos.y
     };
 
     fprintf(destination,
@@ -574,20 +995,20 @@ void region_serialise_vtk(
     fprintf(destination, "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"X\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
         (compute_t) shifted_indents.x / region->resolution,
-        (compute_t) (shifted_indents.x + size.x - 1) / region->resolution);
+        (compute_t) (shifted_indents.x + size.x) / region->resolution);
 
     // Write out physical positions of X co-ordinates.
-    for (indexer_t h_idx = 0; h_idx < size.x; ++h_idx)
+    for (indexer_t h_idx = 0; h_idx <= size.x; ++h_idx)
         fprintf(destination, "%lf ", (compute_t) (h_idx + shifted_indents.x) / region->resolution);
 
     fprintf(destination, "\n\t\t\t\t</DataArray>\n"
                          "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"Y\" RangeMin=\"%lf\" "
                          "RangeMax=\"%lf\">\n",
         (compute_t) shifted_indents.y / region->resolution,
-        (compute_t) (shifted_indents.y + size.y - 1) / region->resolution);
+        (compute_t) (shifted_indents.y + size.y) / region->resolution);
 
     // Write out physical positions of Y co-ordinates.
-    for (indexer_t v_idx = 0; v_idx < size.y; ++v_idx)
+    for (indexer_t v_idx = 0; v_idx <= size.y; ++v_idx)
         fprintf(destination, "%lf ", (compute_t) (v_idx + shifted_indents.y) / region->resolution);
 
     fputs(
@@ -615,8 +1036,8 @@ void region_serialise_vtk(
         destination);
 
     // Write out pressure scalars.
-    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
-        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx)
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end - 1; ++v_idx) {
+        for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end - 1; ++h_idx)
             fprintf(destination, "%lf  ", region->pressure[h_idx][v_idx]);
         fputc('\n', destination);
     }
@@ -629,4 +1050,12 @@ void region_serialise_vtk(
         "</VTKFile>\n",
 
         destination);
+}
+
+void step(const struct region * const region)
+{
+    compute_tentative_velocities(region);
+    compute_pressure(region);
+    update_velocities(region);
+    // TODO: hx
 }

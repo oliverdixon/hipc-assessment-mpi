@@ -50,6 +50,10 @@ int main(int argc, char **argv)
     region_describe(&region, stderr);
     region_initialise(&region, &instance);
 
+    region_apply_boundary_conditions(&region);
+    step(&region);
+    region_apply_boundary_conditions(&region);
+
     serialise(&instance, &region);
 
     region_destroy(&region);

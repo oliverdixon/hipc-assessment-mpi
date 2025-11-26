@@ -56,11 +56,12 @@ void parse_args(int argc, char *argv[])
 {
     int option_index = 0;
     char c;
+    int parameters;
 
     while ((c = getopt_long(argc, argv, GETOPTS, long_options, &option_index)) != -1) {
         switch (c) {
         case 'a':
-            const int parameters = atoi(optarg);
+            parameters = atoi(optarg);
 
             if (parameters < 1000 || parameters > 9999) {
                 fprintf(stderr, "Error: NACA Airfoil Specification must be 4-digits.\n");

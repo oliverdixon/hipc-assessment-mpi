@@ -49,4 +49,8 @@ void instance_serialise_vtk(
 
 struct dim2 instance_get_indentations(const struct instance *instance, struct dim2 own_size);
 
+struct dim2 instance_translate_to_points(const struct instance *instance, const struct dim2* cell_source);
+
+struct dim2 instance_translate_to_cells(const struct instance *instance, const struct dim2* points_source);
+
 #endif // HIPC_ASSESSMENT_INSTANCE_H

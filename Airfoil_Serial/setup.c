@@ -124,8 +124,6 @@ void problem_set_up()
 
         for (unsigned int v_cell_idx = v_idx_start; v_cell_idx < v_idx_end; ++v_cell_idx)
             flags[h_cell_idx][v_cell_idx] = CELL_BOUNDARY;
-
-        printf("%d\t%d\t%d\n", h_cell_idx, v_idx_start, v_idx_end);
     }
 
     // Mark the extreme north and south boundary cells

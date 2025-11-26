@@ -13,9 +13,10 @@ static MPI_Datatype create_dim2_type()
     static const int field_count = 2;
 
 #pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdefault-const-init-field-unsafe"
+#pragma clang diagnostic ignored "-Wdefault-const-init-var-unsafe"
     const struct dim2 dim2_t_dummy;
 #pragma clang diagnostic pop
+
     MPI_Aint dim2_t_base_address;
     MPI_Get_address(&dim2_t_dummy, &dim2_t_base_address);
 
@@ -41,7 +42,8 @@ static void collect_dimension_data(const struct instance *const instance, const 
     MPI_Request reqs[3];
     int request_idx = 0;
 
-    MPI_Igather(&region->indents, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0, instance->cartesian_comm,
+    const struct dim2 shifted_indents = instance_translate_to_cells(instance, &region->indents);
+    MPI_Igather(&shifted_indents, 1, instance->dim2_t, indents, 1, instance->dim2_t, 0, instance->cartesian_comm,
         &reqs[request_idx++]);
 
     const indexer_t width = region->h_exterior.end - region->h_exterior.begin;
@@ -125,17 +127,17 @@ void instance_serialise_vtk(
     const char * const subfile_extension,
     FILE *const destination)
 {
-    struct dim2 * indents = NULL;
+    struct dim2 * shifted_indents = NULL;
     indexer_t * widths = NULL;
     indexer_t * heights = NULL;
 
     if (instance->rank == 0) {
-        indents = malloc(sizeof(struct dim2) * instance->count);
+        shifted_indents = malloc(sizeof(struct dim2) * instance->count);
         widths = malloc(sizeof(indexer_t) * instance->count);
         heights = malloc(sizeof(indexer_t) * instance->count);
     }
 
-    collect_dimension_data(instance, region, indents, widths, heights);
+    collect_dimension_data(instance, region, shifted_indents, widths, heights);
     if (instance->rank != 0)
         return;
 
@@ -158,26 +160,38 @@ void instance_serialise_vtk(
         (unsigned int) instance->problem_size.x * region->resolution,
         (unsigned int) instance->problem_size.y * region->resolution);
 
-    for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id) {
-        if (indents[rank_id].x > 0)
-            --indents[rank_id].x;
-
-        if (indents[rank_id].y > 0)
-            --indents[rank_id].y;
-
+    for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id)
         fprintf(destination,
             "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%02d%s\" />\n",
-            indents[rank_id].x, indents[rank_id].x + widths[rank_id] - 1,
-            indents[rank_id].y, indents[rank_id].y + heights[rank_id] - 1,
+            shifted_indents[rank_id].x, shifted_indents[rank_id].x + widths[rank_id] - 1,
+            shifted_indents[rank_id].y, shifted_indents[rank_id].y + heights[rank_id] - 1,
             subfile_prefix, rank_id, subfile_extension);
-    }
 
     fputs("\t</PRectilinearGrid>\n"
           "</VTKFile>\n", destination);
 
     free(heights);
     free(widths);
-    free(indents);
+    free(shifted_indents);
+}
+
+struct dim2 instance_translate_to_cells(const struct instance *instance, const struct dim2 *points_source)
+{
+    const struct dim2 v = {
+        .x = points_source->x - instance->cartesian_pos.x,
+        .y = points_source->y - instance->cartesian_pos.y
+    };
+
+    return v;}
+
+struct dim2 instance_translate_to_points(const struct instance *instance, const struct dim2 *cell_source)
+{
+    const struct dim2 v = {
+        .x = cell_source->x + instance->cartesian_pos.x,
+        .y = cell_source->y + instance->cartesian_pos.y
+    };
+
+    return v;
 }
 
 struct dim2 instance_get_indentations(const struct instance * const instance, const struct dim2 own_size)

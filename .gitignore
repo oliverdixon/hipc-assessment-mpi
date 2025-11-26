@@ -3,6 +3,7 @@
 Airfoil_Original
 Airfoil_MPI/tmpi
 Airfoil_MPI/valgrind.supp
+/griebel.pdf
 
 .idea/runConfigurations
 .idea/cmake.xml

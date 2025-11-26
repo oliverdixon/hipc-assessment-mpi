@@ -14,12 +14,12 @@ struct instance;
 
 enum cell_flags
 {
-    CELL_BOUNDARY = 1, /**< Boundary cell */
+    CELL_BOUNDARY = 0, /**< Boundary cell */
 
-    CELL_FLUID_NORTH = 1 << 1, /**< Boundary cell with fluid to the north */
-    CELL_FLUID_SOUTH = 1 << 2, /**< Boundary cell with fluid to the south */
-    CELL_FLUID_WEST = 1 << 3, /**< Boundary cell with fluid to the west */
-    CELL_FLUID_EAST = 1 << 4, /**< Boundary cell with fluid to the east */
+    CELL_FLUID_NORTH = 1, /**< Boundary cell with fluid to the north */
+    CELL_FLUID_SOUTH = 1 << 1, /**< Boundary cell with fluid to the south */
+    CELL_FLUID_WEST = 1 << 2, /**< Boundary cell with fluid to the west */
+    CELL_FLUID_EAST = 1 << 3, /**< Boundary cell with fluid to the east */
 
     CELL_FLUID_NORTHWEST = CELL_FLUID_NORTH | CELL_FLUID_WEST,
     CELL_FLUID_SOUTHWEST = CELL_FLUID_SOUTH | CELL_FLUID_WEST,
@@ -27,7 +27,7 @@ enum cell_flags
     CELL_FLUID_SOUTHEAST = CELL_FLUID_SOUTH | CELL_FLUID_EAST,
     CELL_FLUID_ALL = CELL_FLUID_NORTH | CELL_FLUID_SOUTH | CELL_FLUID_EAST | CELL_FLUID_WEST,
 
-    CELL_FLUID = 1 << 5, /**< Fluid cell */
+    CELL_FLUID = 1 << 4, /**< Fluid cell */
 };
 
 enum region_flags
@@ -60,6 +60,8 @@ struct region
     enum cell_flags *const *const flags;
 
     const enum region_flags region_flags;
+    const indexer_t allocation_stride;
+    unsigned int fluid_cell_count;
 
     const struct iterator h_interior;
     const struct iterator v_interior;
@@ -84,10 +86,16 @@ void region_destroy(struct region *region);
 
 void region_describe(const struct region *region, FILE *destination);
 
+void region_apply_boundary_conditions(const struct region * region);
+
 void region_print_flags(const struct region *region, FILE *destination);
 
-void region_initialise(const struct region *region, const struct instance *instance);
+void region_initialise(struct region *region, const struct instance *instance);
 
 void region_serialise_vtk(const struct region *region, const struct instance *instance, FILE *destination);
+
+void region_halo_exchange(const struct region * region, const struct instance * instance);
+
+void step(const struct region * region);
 
 #endif // HIPC_ASSESSMENT_REGION_H

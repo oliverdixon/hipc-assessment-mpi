@@ -12,6 +12,9 @@
     },
     {
       "name": "usb-local",
+      "cacheVariables": {
+        "MPIEXEC_EXECUTABLE": "/home/userfs/o/od641/usb/files/mpi-debugging/usr/bin/mpiexec"
+      },
       "environment": {
         "CC": "/home/userfs/o/od641/usb/files/clang/usr/bin/cc"
       }

@@ -2,6 +2,11 @@ cmake_minimum_required(VERSION 4.0)
 project(HIPC_Assessment LANGUAGES C)
 include(CheckCCompilerFlag)
 
+check_c_compiler_flag(-Wunknown-warning-option WARN_UNKNOWN_WARNING)
+if (WARN_UNKNOWN_WARNING)
+    add_compile_options(-Wno-unknown-warning-option)
+endif()
+
 # Serial
 
 add_executable(Airfoil_Serial
