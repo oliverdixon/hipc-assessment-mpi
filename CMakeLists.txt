@@ -51,6 +51,8 @@ add_executable(Airfoil_MPI
         Airfoil_MPI/instance.c
         Airfoil_MPI/instance.h
         Airfoil_MPI/types.h
+        Airfoil_MPI/exchanger.c
+        Airfoil_MPI/exchanger.h
 )
 
 set_property(TARGET Airfoil_MPI PROPERTY CMAKE_C_STANDARD 11)

@@ -8,7 +8,7 @@
 #include <mpi.h>
 #include <stdio.h>
 
-#include "types.h"
+#include "exchanger.h"
 
 struct instance;
 
@@ -75,10 +75,15 @@ struct region
     const compute_t initial_pressure;
     const enum cell_flags initial_flag;
 
-    MPI_Datatype compute_row_t;
     MPI_Datatype compute_col_t;
-    MPI_Datatype flags_row_t;
+    MPI_Datatype compute_row_t;
     MPI_Datatype flags_col_t;
+    MPI_Datatype flags_row_t;
+
+    struct exchanger velocity_x_exchanger;
+    struct exchanger velocity_y_exchanger;
+    struct exchanger pressure_exchanger;
+    struct exchanger flags_exchanger;
 };
 
 struct region region_create(const struct instance *instance);
@@ -93,7 +98,7 @@ void region_initialise(struct region *region, const struct instance *instance);
 
 void region_serialise_vtk(const struct region *region, const struct instance *instance, FILE *destination);
 
-void region_halo_exchange(const struct region * region, const struct instance * instance);
+void region_compute_halo_exchange(const struct region *region);
 
 void step(const struct region * region);
 

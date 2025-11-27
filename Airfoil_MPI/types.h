@@ -26,4 +26,12 @@ struct dim2
     indexer_t y;
 };
 
+struct neighbours
+{
+    int north;
+    int east;
+    int south;
+    int west;
+};
+
 #endif // HIPC_ASSESSMENT_TYPES_H

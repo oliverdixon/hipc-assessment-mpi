@@ -19,14 +19,6 @@ struct naca_specifier
     unsigned char maximum_thickness;
 };
 
-struct neighbours
-{
-    int north;
-    int east;
-    int south;
-    int west;
-};
-
 struct instance
 {
     const int rank;

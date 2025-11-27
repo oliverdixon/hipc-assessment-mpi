@@ -9,54 +9,9 @@
 #include <stdlib.h>
 #include <strings.h>
 
+#include "exchanger.h"
 #include "instance.h"
 #include "region.h"
-
-struct hx_data
-{
-    const MPI_Datatype * row_t;
-    const MPI_Datatype * col_t;
-
-    const void * north_row;
-    void * north_ghost;
-
-    const void * south_row;
-    void * south_ghost;
-
-    const void * east_col;
-    void * east_ghost;
-
-    const void * west_col;
-    void * west_ghost;
-};
-
-static compute_t **alloc_2d_compute_array(const struct dim2 size)
-{
-    compute_t **array = malloc(size.x * sizeof(compute_t *));
-    array[0] = calloc(size.x * size.y, sizeof(compute_t));
-
-    for (size_t column_idx = 1; column_idx < size.x; ++column_idx)
-        array[column_idx] = &array[0][column_idx * size.y];
-
-    return array;
-}
-
-static enum cell_flags **alloc_2d_flags_array(const struct dim2 size)
-{
-    enum cell_flags **array = malloc(size.x * sizeof(enum cell_flags *));
-    array[0] = calloc(size.x * size.y, sizeof(enum cell_flags));
-
-    for (size_t column_idx = 1; column_idx < size.x; ++column_idx)
-        array[column_idx] = &array[0][column_idx * size.y];
-
-    return array;
-}
-
-static void free_2d_array(void **array)
-{
-    free(array[0]);
-    free(array);
-}
 
 static MPI_Datatype create_row_t(
         const MPI_Aint column_count,
@@ -90,6 +45,34 @@ static MPI_Datatype create_column_t(
     MPI_Type_commit(&column_t);
 
     return column_t;
+}
+
+static compute_t **alloc_2d_compute_array(const struct dim2 size)
+{
+    compute_t **array = malloc(size.x * sizeof(compute_t *));
+    array[0] = calloc(size.x * size.y, sizeof(compute_t));
+
+    for (size_t column_idx = 1; column_idx < size.x; ++column_idx)
+        array[column_idx] = &array[0][column_idx * size.y];
+
+    return array;
+}
+
+static enum cell_flags **alloc_2d_flags_array(const struct dim2 size)
+{
+    enum cell_flags **array = malloc(size.x * sizeof(enum cell_flags *));
+    array[0] = calloc(size.x * size.y, sizeof(enum cell_flags));
+
+    for (size_t column_idx = 1; column_idx < size.x; ++column_idx)
+        array[column_idx] = &array[0][column_idx * size.y];
+
+    return array;
+}
+
+static void free_2d_array(void **array)
+{
+    free(array[0]);
+    free(array);
 }
 
 static struct iterator get_initial_v_idx_boundaries(
@@ -191,101 +174,9 @@ static void write_initial_extreme_boundaries(const struct region *const region)
             flags[region->h_exterior.end - 1][v_idx] = CELL_BOUNDARY;
 }
 
-static void hx_matrix(
-    const MPI_Comm * const comm,
-    const struct neighbours * const neighbour_ranks,
-    const struct hx_data * const data)
+void region_compute_halo_exchange(const struct region *const region)
 {
-    MPI_Request requests[4];
-    int request_idx = 0;
-
-    // North
-    MPI_Isendrecv(
-        data->north_row, 1, *data->row_t, neighbour_ranks->north, 2,
-        data->north_ghost, 1, *data->row_t, neighbour_ranks->north, 3,
-        *comm, &requests[request_idx++]);
-
-    // South
-    MPI_Isendrecv(
-        data->south_row, 1, *data->row_t, neighbour_ranks->south, 3,
-        data->south_ghost, 1, *data->row_t, neighbour_ranks->south, 2,
-        *comm, &requests[request_idx++]);
-
-    // East
-    MPI_Isendrecv(
-        data->east_col, 1, *data->col_t, neighbour_ranks->east, 0,
-        data->east_ghost, 1, *data->col_t, neighbour_ranks->east, 1,
-        *comm, &requests[request_idx++]);
-
-    // West
-    MPI_Isendrecv(
-        data->west_col, 1, *data->col_t, neighbour_ranks->west, 1,
-        data->west_ghost, 1, *data->col_t, neighbour_ranks->west, 0,
-        *comm, &requests[request_idx++]);
-
-    MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
-}
-
-void region_halo_exchange(const struct region *const region, const struct instance *const instance)
-{
-    // TODO refactor this horrible function.
-    struct hx_data hx_data = {
-        .row_t = &region->compute_row_t,
-        .col_t = &region->compute_col_t
-    };
-
-    hx_data.north_row = &region->velocity_x[0][region->v_exterior.begin];
-    hx_data.north_ghost = &region->velocity_x[0][0];
-    hx_data.south_row = &region->velocity_x[0][region->v_exterior.end - 1];
-    hx_data.south_ghost = &region->velocity_x[0][region->v_exterior.end];
-
-    hx_data.west_col = region->velocity_x[region->h_exterior.begin];
-    hx_data.west_ghost = region->velocity_x[0];
-    hx_data.east_col = region->velocity_x[region->h_exterior.end - 1];
-    hx_data.east_ghost = region->velocity_x[region->h_exterior.end];
-
-    hx_matrix(&instance->cartesian_comm, &instance->neighbours, &hx_data);
-
-    hx_data.north_row = &region->velocity_y[0][region->v_exterior.begin];
-    hx_data.north_ghost = &region->velocity_y[0][0];
-    hx_data.south_row = &region->velocity_y[0][region->v_exterior.end - 1];
-    hx_data.south_ghost = &region->velocity_y[0][region->v_exterior.end];
-
-    hx_data.west_col = region->velocity_y[region->h_exterior.begin];
-    hx_data.west_ghost = region->velocity_y[0];
-    hx_data.east_col = region->velocity_y[region->h_exterior.end - 1];
-    hx_data.east_ghost = region->velocity_y[region->h_exterior.end];
-
-    hx_matrix(&instance->cartesian_comm, &instance->neighbours, &hx_data);
-
-    hx_data.north_row = &region->pressure[0][region->v_exterior.begin];
-    hx_data.north_ghost = &region->pressure[0][0];
-    hx_data.south_row = &region->pressure[0][region->v_exterior.end - 1];
-    hx_data.south_ghost = &region->pressure[0][region->v_exterior.end];
-
-    hx_data.west_col = region->pressure[region->h_exterior.begin];
-    hx_data.west_ghost = region->pressure[0];
-    hx_data.east_col = region->pressure[region->h_exterior.end - 1];
-    hx_data.east_ghost = region->pressure[region->h_exterior.end];
-
-    hx_matrix(&instance->cartesian_comm, &instance->neighbours, &hx_data);
-
-    // Flags
-
-    hx_data.row_t = &region->flags_row_t;
-    hx_data.col_t = &region->flags_col_t;
-    
-    hx_data.north_row = &region->flags[0][region->v_exterior.begin];
-    hx_data.north_ghost = &region->flags[0][0];
-    hx_data.south_row = &region->flags[0][region->v_exterior.end - 1];
-    hx_data.south_ghost = &region->flags[0][region->v_exterior.end];
-
-    hx_data.west_col = region->flags[region->h_exterior.begin];
-    hx_data.west_ghost = region->flags[0];
-    hx_data.east_col = region->flags[region->h_exterior.end - 1];
-    hx_data.east_ghost = region->flags[region->h_exterior.end];
-
-    hx_matrix(&instance->cartesian_comm, &instance->neighbours, &hx_data);
+    // TODO velocity and pressure exchanges here.  Maybe also flags?  Or separate into another function?
 }
 
 static enum region_flags compute_region_flags(
@@ -472,6 +363,16 @@ struct region region_create(const struct instance *const instance)
         .flags_col_t = create_column_t(allocations.y, MPI_INT)
     };
 
+    // Create exchangers for matrices that will require halo exchange across ranks.
+    region.velocity_x_exchanger = exchanger_create_compute(region.velocity_x, h_exterior, v_exterior,
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+    region.velocity_y_exchanger = exchanger_create_compute(region.velocity_y, h_exterior, v_exterior,
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+    region.pressure_exchanger = exchanger_create_compute(region.pressure, h_exterior, v_exterior,
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+    region.flags_exchanger = exchanger_create_flags(region.flags, h_exterior, v_exterior,
+        instance->cartesian_comm, region.flags_row_t, region.flags_col_t);
+
     // All cells are initially fluid. This count can be decremented throughout the simulation.
     region.fluid_cell_count = (region.h_interior.end - region.h_interior.begin) *
         (region.v_interior.end - region.v_interior.begin);
@@ -484,10 +385,10 @@ struct region region_create(const struct instance *const instance)
 
 void region_destroy(struct region *const region)
 {
-    MPI_Type_free(&region->flags_col_t);
-    MPI_Type_free(&region->flags_row_t);
-    MPI_Type_free(&region->compute_col_t);
     MPI_Type_free(&region->compute_row_t);
+    MPI_Type_free(&region->compute_col_t);
+    MPI_Type_free(&region->flags_row_t);
+    MPI_Type_free(&region->flags_col_t);
 
     free_2d_array((void **) region->velocity_x);
     free_2d_array((void **) region->velocity_y);

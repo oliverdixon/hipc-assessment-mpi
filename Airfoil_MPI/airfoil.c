@@ -50,9 +50,9 @@ int main(int argc, char **argv)
     region_describe(&region, stderr);
     region_initialise(&region, &instance);
 
-    region_halo_exchange(&region, &instance);
+    region_compute_halo_exchange(&region);
     region_apply_boundary_conditions(&region);
-    region_halo_exchange(&region, &instance);
+    region_compute_halo_exchange(&region);
     step(&region);
 
     serialise(&instance, &region);
