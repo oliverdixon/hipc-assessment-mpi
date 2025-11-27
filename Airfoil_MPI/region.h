@@ -60,7 +60,6 @@ struct region
     enum cell_flags *const *const flags;
 
     const enum region_flags region_flags;
-    const indexer_t allocation_stride;
     unsigned int fluid_cell_count;
 
     const struct iterator h_interior;
@@ -76,8 +75,10 @@ struct region
     const compute_t initial_pressure;
     const enum cell_flags initial_flag;
 
-    MPI_Datatype row_t;
-    MPI_Datatype col_t;
+    MPI_Datatype compute_row_t;
+    MPI_Datatype compute_col_t;
+    MPI_Datatype flags_row_t;
+    MPI_Datatype flags_col_t;
 };
 
 struct region region_create(const struct instance *instance);
@@ -86,9 +87,7 @@ void region_destroy(struct region *region);
 
 void region_describe(const struct region *region, FILE *destination);
 
-void region_apply_boundary_conditions(const struct region * region);
-
-void region_print_flags(const struct region *region, FILE *destination);
+void region_apply_boundary_conditions(const struct region *region);
 
 void region_initialise(struct region *region, const struct instance *instance);
 

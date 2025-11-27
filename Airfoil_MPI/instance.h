@@ -19,11 +19,20 @@ struct naca_specifier
     unsigned char maximum_thickness;
 };
 
+struct neighbours
+{
+    int north;
+    int east;
+    int south;
+    int west;
+};
+
 struct instance
 {
     const int rank;
     const int count;
     MPI_Comm cartesian_comm;
+    struct neighbours neighbours;
 
     const struct dim2 dim_extents;
     const struct dim2 cartesian_pos;

@@ -73,7 +73,7 @@ struct instance instance_create()
     int coords[2];
     MPI_Cart_coords(cartesian_comm, rank, 2, coords);
 
-    const struct instance instance = {
+    struct instance instance = {
         .rank = rank,
         .count = count,
         .cartesian_comm = cartesian_comm,
@@ -95,12 +95,16 @@ struct instance instance_create()
         .dim2_t = create_dim2_type()
     };
 
+    MPI_Cart_shift(cartesian_comm, 0, 1, &instance.neighbours.west, &instance.neighbours.east);
+    MPI_Cart_shift(cartesian_comm, 1, 1, &instance.neighbours.north, &instance.neighbours.south);
+
     return instance;
 }
 
 void instance_destroy(struct instance *instance)
 {
     MPI_Type_free(&instance->dim2_t);
+    MPI_Comm_free(&instance->cartesian_comm);
 }
 
 void instance_describe(const struct instance *instance, FILE *const destination)
