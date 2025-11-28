@@ -79,7 +79,10 @@ static struct iterator get_initial_v_idx_boundaries(
         const struct region *const region, const compute_t problem_height, const float maximum_camber,
         const float edge_distance, const float thickness, const indexer_t h_idx)
 {
-    struct iterator boundaries = {.begin = 0, .end = 0};
+    struct iterator boundaries = {
+        .begin = 0,
+        .end = 0
+    };
 
     /*
      * Position along chord, normalised to [0, 1]. From here, 'x' is translated into the co-ordinate space of the
@@ -174,14 +177,11 @@ static void write_initial_extreme_boundaries(const struct region *const region)
             flags[region->h_exterior.end - 1][v_idx] = CELL_BOUNDARY;
 }
 
-void region_compute_halo_exchange(const struct region *const region)
-{
-    // TODO velocity and pressure exchanges here.  Maybe also flags?  Or separate into another function?
-}
-
 static enum region_flags compute_region_flags(
-        const struct instance *const instance, const struct dim2 *const global_cell_counts,
-        struct dim2 *const local_cell_counts, struct dim2 *const allocations)
+        const struct instance *const instance,
+        const struct dim2 *const global_cell_counts,
+        struct dim2 *const local_cell_counts,
+        struct dim2 *const allocations)
 {
     enum region_flags region_flags = REGION_UNREMARKABLE;
     struct dim2 ghost_counts = {
@@ -365,13 +365,13 @@ struct region region_create(const struct instance *const instance)
 
     // Create exchangers for matrices that will require halo exchange across ranks.
     region.velocity_x_exchanger = exchanger_create_compute(region.velocity_x, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
     region.velocity_y_exchanger = exchanger_create_compute(region.velocity_y, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
     region.pressure_exchanger = exchanger_create_compute(region.pressure, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t);
+        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
     region.flags_exchanger = exchanger_create_flags(region.flags, h_exterior, v_exterior,
-        instance->cartesian_comm, region.flags_row_t, region.flags_col_t);
+        instance->cartesian_comm, region.flags_row_t, region.flags_col_t, &instance->neighbours);
 
     // All cells are initially fluid. This count can be decremented throughout the simulation.
     region.fluid_cell_count = (region.h_interior.end - region.h_interior.begin) *
@@ -449,14 +449,14 @@ void region_apply_boundary_conditions(const struct region *const region)
         velocity_y[region->h_exterior.end - 1][v_cell_idx] = velocity_y[region->h_exterior.end - 2][v_cell_idx];
     }
 
-    for (indexer_t h_cell_idx = region->h_exterior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) {
+    for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx) {
         /* The vertical velocity approaches 0 at the north and south
          * boundaries, but fluid flows freely in the horizontal direction */
-        velocity_y[h_cell_idx][region->v_exterior.end - 2] = 0.0;
-        velocity_x[h_cell_idx][region->v_exterior.end - 1] = velocity_x[h_cell_idx][region->v_exterior.end - 2];
+        velocity_y[h_idx][region->v_exterior.end - 2] = 0.0;
+        velocity_x[h_idx][region->v_exterior.end - 1] = velocity_x[h_idx][region->v_exterior.end - 2];
 
-        velocity_y[h_cell_idx][region->v_exterior.begin] = 0.0;
-        velocity_x[h_cell_idx][region->v_exterior.begin] = velocity_x[h_cell_idx][region->v_exterior.begin + 1];
+        velocity_y[h_idx][region->v_exterior.begin] = 0.0;
+        velocity_x[h_idx][region->v_exterior.begin] = velocity_x[h_idx][region->v_exterior.begin + 1];
     }
 
     /*
@@ -525,7 +525,7 @@ void region_apply_boundary_conditions(const struct region *const region)
     }
 }
 
-static void update_velocities(const struct region * const region)
+void region_update_velocities(const struct region * const region)
 {
     /*
      * The pressure differential factors are the constants implied by the discretisation of the momentum equation. They
@@ -557,7 +557,7 @@ static void update_velocities(const struct region * const region)
                     (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
 }
 
-static void compute_tentative_velocities(const struct region * const region)
+void region_compute_tentative_velocities(const struct region * const region)
 {
     static const double gamma = 0.9; // Upwind differencing factor in PDE discretisation
 
@@ -692,7 +692,7 @@ static void compute_tentative_velocities(const struct region * const region)
     }
 }
 
-static void compute_poisson_source(const struct region * const region)
+void region_compute_poisson_source(const struct region * const region)
 {
     compute_t * const * const tentative_velocity_x = region->tentative_velocity_x;
     compute_t * const * const tentative_velocity_y = region->tentative_velocity_y;
@@ -701,116 +701,97 @@ static void compute_poisson_source(const struct region * const region)
 
     static const compute_t timestep_duration = 0.003; // TODO move into struct
     
-    for (indexer_t h_cell_idx = region->h_interior.begin; h_cell_idx < region->h_exterior.end; ++h_cell_idx) // TODO check
-        for (indexer_t v_cell_idx = region->v_interior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) // TODO check
-            if (flags[h_cell_idx][v_cell_idx] & CELL_FLUID) {
-                const compute_t x_tent_vel_diff = (tentative_velocity_x[h_cell_idx][v_cell_idx] -
-                    tentative_velocity_x[h_cell_idx - 1][v_cell_idx]) * region->resolution;
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) // TODO check
+            if (flags[h_idx][v_idx] & CELL_FLUID) {
+                const compute_t x_tent_vel_diff = (tentative_velocity_x[h_idx][v_idx] -
+                    tentative_velocity_x[h_idx - 1][v_idx]) * region->resolution;
 
-                const compute_t y_tent_vel_diff = (tentative_velocity_y[h_cell_idx][v_cell_idx] -
-                    tentative_velocity_y[h_cell_idx][v_cell_idx - 1]) * region->resolution;
+                const compute_t y_tent_vel_diff = (tentative_velocity_y[h_idx][v_idx] -
+                    tentative_velocity_y[h_idx][v_idx - 1]) * region->resolution;
 
-                poisson_source[h_cell_idx][v_cell_idx] = (x_tent_vel_diff + y_tent_vel_diff) / timestep_duration;
+                poisson_source[h_idx][v_idx] = (x_tent_vel_diff + y_tent_vel_diff) / timestep_duration;
             }
 }
 
-static compute_t compute_pressure(const struct region * const region)
+void region_sor_cycle(const struct region *const region)
 {
-    static const indexer_t itermax = 100; // Maximum number of iterations in SOR
-    static const compute_t epsilon = 0.001; // Stopping error threshold for SOR
-    static const compute_t omega = 1.7; // Relaxation parameter for SOR
+    static const compute_t omega = 1.7; // Relaxation parameter
 
-    compute_poisson_source(region);
+    const compute_t step_sq = region->resolution * region->resolution;
+    const compute_t internal_weight = omega / (4.0 * region->resolution * region->resolution);
 
-    const compute_t rdx2 = region->resolution * region->resolution;
-    const compute_t rdy2 = region->resolution * region->resolution; // TODO don't need different resolutions for dimensions
-    const compute_t beta_2 = -omega / (2.0 * (rdx2 + rdy2));
+    // TODO: use red-black SOR.
 
-    compute_t * const * const pressure = region->pressure;
-    compute_t * const * const poisson_source = region->poisson_source;
-    enum cell_flags * const * const flags = region->flags;
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+            if (region->flags[h_idx][v_idx] & CELL_FLUID_ALL) {
 
-    compute_t p0 = 0.0;
+                /*
+                 * Special case of other branch for cells surrounded by fluid in all directions.
+                 * I.e., \epsilon_i^{N,E,S,W} := 1.
+                 */
+                const compute_t x_spatial = (region->pressure[h_idx + 1][v_idx] +
+                    region->pressure[h_idx - 1][v_idx]) * step_sq;
 
-    /* Calculate sum of squares */
-    for (indexer_t h_idx = 1; h_idx < region->h_exterior.end; ++h_idx) // TODO check
-        for (indexer_t v_idx = 1; v_idx < region->v_exterior.end; ++v_idx) // TODO check
-            if (flags[h_idx][v_idx] & CELL_FLUID)
-                p0 += pressure[h_idx][v_idx] * pressure[h_idx][v_idx];
+                const compute_t y_spatial = (region->pressure[h_idx][v_idx + 1] +
+                    region->pressure[h_idx][v_idx - 1]) * step_sq;
 
-    p0 = sqrt(p0 / region->fluid_cell_count);
-    if (p0 < 0.0001)
-        p0 = 1.0;
+                region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + internal_weight *
+                    (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
 
-    /* Red/Black SOR-iteration */
+            } else if (region->flags[h_idx][v_idx] & CELL_FLUID) {
 
+                // Epsilon parameters indicate whether fluid lies in the cell in the corresponding direction.
+                const bool epsilon_east = !!(region->flags[h_idx + 1][v_idx] & CELL_FLUID);
+                const bool epsilon_west = !!(region->flags[h_idx - 1][v_idx] & CELL_FLUID);
+                const bool epsilon_north = !!(region->flags[h_idx][v_idx + 1] & CELL_FLUID);
+                const bool epsilon_south = !!(region->flags[h_idx][v_idx - 1] & CELL_FLUID);
+
+                const compute_t weight = omega / ((epsilon_east + epsilon_west) * step_sq +
+                    (epsilon_north + epsilon_south) * step_sq);
+
+                const compute_t x_spatial = (epsilon_east * region->pressure[h_idx + 1][v_idx] +
+                    epsilon_west * region->pressure[h_idx - 1][v_idx]) * step_sq;
+
+                const compute_t y_spatial = (epsilon_north * region->pressure[h_idx][v_idx + 1] +
+                    epsilon_south * region->pressure[h_idx][v_idx - 1]) * step_sq;
+
+                region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + weight *
+                    (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
+
+            }
+}
+
+compute_t region_compute_partial_residual(const struct region *const region)
+{
+    const compute_t step_sq = region->resolution * region->resolution;
     compute_t residual = 0.0;
 
-    for (indexer_t iteration = 0; iteration < itermax; ++iteration) {
-        for (indexer_t rb = 0; rb < 2; rb++)
-            for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
-                for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end;
-                     ++v_idx) { // TODO check
-                    if ((h_idx + v_idx) % 2 != rb)
-                        continue;
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+            if (!(region->flags[h_idx][v_idx] & CELL_FLUID))
+                continue;
 
-                    if (flags[h_idx][v_idx] == (CELL_FLUID | CELL_FLUID_ALL)) {
-                        /* five point star for interior fluid cells */
-                        pressure[h_idx][v_idx] = (1.0 - omega) * pressure[h_idx][v_idx] -
-                                beta_2 *
-                                        ((pressure[h_idx + 1][v_idx] + pressure[h_idx - 1][v_idx]) * rdx2 +
-                                         (pressure[h_idx][v_idx + 1] + pressure[h_idx][v_idx - 1]) * rdy2 -
-                                         poisson_source[h_idx][v_idx]);
+            // Epsilon parameters indicate whether fluid lies in the cell in the corresponding direction.
+            const bool epsilon_east = !!(region->flags[h_idx + 1][v_idx] & CELL_FLUID);
+            const bool epsilon_west = !!(region->flags[h_idx - 1][v_idx] & CELL_FLUID);
+            const bool epsilon_north = !!(region->flags[h_idx][v_idx + 1] & CELL_FLUID);
+            const bool epsilon_south = !!(region->flags[h_idx][v_idx - 1] & CELL_FLUID);
 
-                    } else if (flags[h_idx][v_idx] & CELL_FLUID) {
-                        /* modified star near boundary */
+            const compute_t p0 = region->pressure[h_idx][v_idx];
 
-                        const compute_t epsilon_east = !!(flags[h_idx + 1][v_idx] & CELL_FLUID);
-                        const compute_t epsilon_west = !!(flags[h_idx - 1][v_idx] & CELL_FLUID);
-                        const compute_t epsilon_north = !!(flags[h_idx][v_idx + 1] & CELL_FLUID);
-                        const compute_t epsilon_south = !!(flags[h_idx][v_idx - 1] & CELL_FLUID);
+            const compute_t x_residual = (epsilon_east * (region->pressure[h_idx + 1][v_idx] - p0) -
+                epsilon_west * (p0 - region->pressure[h_idx - 1][v_idx])) * step_sq;
 
-                        const compute_t beta_mod = -omega /
-                                ((epsilon_east + epsilon_west) * rdx2 + (epsilon_north + epsilon_south) * rdy2);
-                        pressure[h_idx][v_idx] = (1.0 - omega) * pressure[h_idx][v_idx] -
-                                beta_mod *
-                                        ((epsilon_east * pressure[h_idx + 1][v_idx] +
-                                          epsilon_west * pressure[h_idx - 1][v_idx]) *
-                                                 rdx2 +
-                                         (epsilon_north * pressure[h_idx][v_idx + 1] +
-                                          epsilon_south * pressure[h_idx][v_idx - 1]) *
-                                                 rdy2 -
-                                         poisson_source[h_idx][v_idx]);
-                    }
-                }
+            const compute_t y_residual = (epsilon_north * (region->pressure[h_idx][v_idx + 1] - p0) -
+                epsilon_south * (p0 - region->pressure[h_idx][v_idx - 1])) * step_sq;
 
-        // Compute the Laplacian residual over fluid cells.
+            const compute_t local_residual = x_residual + y_residual - region->poisson_source[h_idx][v_idx];
+            residual += local_residual * local_residual;
+        }
 
-        for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
-            for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) // TODO check
-                if (flags[h_idx][v_idx] & CELL_FLUID) {
-
-                    const compute_t epsilon_east = !!(flags[h_idx + 1][v_idx] & CELL_FLUID);
-                    const compute_t epsilon_west = !!(flags[h_idx - 1][v_idx] & CELL_FLUID);
-                    const compute_t epsilon_north = !!(flags[h_idx][v_idx + 1] & CELL_FLUID);
-                    const compute_t epsilon_south = !!(flags[h_idx][v_idx - 1] & CELL_FLUID);
-
-                    const compute_t x_add = epsilon_east * (pressure[h_idx + 1][v_idx] - pressure[h_idx][v_idx]) -
-                            epsilon_west * (pressure[h_idx][v_idx] - pressure[h_idx - 1][v_idx]);
-
-                    const compute_t y_add = epsilon_north * (pressure[h_idx][v_idx + 1] - pressure[h_idx][v_idx]) -
-                        epsilon_south * (pressure[h_idx][v_idx] - pressure[h_idx][v_idx - 1]);
-
-                    const compute_t residual_summand = x_add * rdx2 + y_add * rdy2 - poisson_source[h_idx][v_idx];
-                    residual += residual_summand * residual_summand;
-                }
-
-        residual = sqrt(residual / region->fluid_cell_count) / p0;
-        if (residual < epsilon)
-            break; // The residual has converged.
-    }
-
-    return residual;
+    return residual / region->fluid_cell_count;
 }
 
 void region_initialise(struct region *const region, const struct instance *const instance)
@@ -940,11 +921,4 @@ void region_serialise_vtk(
         "</VTKFile>\n",
 
         destination);
-}
-
-void step(const struct region * const region)
-{
-    compute_tentative_velocities(region);
-    compute_pressure(region);
-    update_velocities(region);
 }

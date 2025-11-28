@@ -3,6 +3,7 @@
 //
 
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <mpi.h>
 #include <stdio.h>
@@ -50,10 +51,56 @@ int main(int argc, char **argv)
     region_describe(&region, stderr);
     region_initialise(&region, &instance);
 
-    region_compute_halo_exchange(&region);
-    region_apply_boundary_conditions(&region);
-    region_compute_halo_exchange(&region);
-    step(&region);
+    static const compute_t step_runtime = 0.003;
+    static const compute_t max_simulation_runtime = 2.0;
+    static const indexer_t sor_max_iterations = 100;
+    static const compute_t sor_residual_epsilon = 0.001;
+    static const indexer_t output_freq = 100;
+
+    compute_t simulation_runtime = 0.0;
+    indexer_t step_iteration = 0;
+
+    while (simulation_runtime < max_simulation_runtime) {
+        // \Delta_t is fixed.
+        region_apply_boundary_conditions(&region); // Set boundary values.
+        region_compute_tentative_velocities(&region); // Compute F^{(n)} and G^{(n)}.
+        region_compute_poisson_source(&region); // Compute the RHS of the pressure equation.
+
+        compute_t latest_residual_norm = INT_MAX;
+
+        for (indexer_t sor_iteration = 0; sor_iteration < sor_max_iterations; ++sor_iteration) {
+            region_sor_cycle(&region); // Perform an SOR cycle
+            exchanger_exchange(&region.pressure_exchanger, &instance.neighbours); // Exchange pressure values
+
+            // Compute the partial residual summands and send to the master process.
+            const compute_t local_residual = region_compute_partial_residual(&region);
+            compute_t residual_sum = 0.0;
+            MPI_Reduce(&local_residual, &residual_sum, 1, MPI_DOUBLE, MPI_SUM, 0, instance.cartesian_comm);
+
+            if (instance.rank == 0)
+                // Master process computes the residual L_2 norm and broadcasts back to slaves.
+                residual_sum = sqrt(residual_sum);
+
+            MPI_Bcast(&residual_sum, 1, MPI_DOUBLE, 0, instance.cartesian_comm);
+            latest_residual_norm = residual_sum;
+
+            if (residual_sum < sor_residual_epsilon)
+                break;
+        }
+
+        // Update and exchange the velocities.
+        region_update_velocities(&region);
+        exchanger_exchange(&region.velocity_x_exchanger, &instance.neighbours);
+        exchanger_exchange(&region.velocity_y_exchanger, &instance.neighbours);
+
+        simulation_runtime += step_runtime;
+
+        if (instance.rank == 0 && step_iteration % output_freq == 0)
+            printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime,
+                latest_residual_norm);
+
+        ++step_iteration;
+    }
 
     serialise(&instance, &region);
 

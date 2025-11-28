@@ -40,7 +40,8 @@ struct exchanger exchanger_create_compute(
     struct iterator v_bounds,
     MPI_Comm comm,
     MPI_Datatype row_t,
-    MPI_Datatype col_t);
+    MPI_Datatype col_t,
+    const struct neighbours * neighbours);
 
 struct exchanger exchanger_create_flags(
     enum cell_flags * const * data,
@@ -48,6 +49,7 @@ struct exchanger exchanger_create_flags(
     struct iterator v_bounds,
     MPI_Comm comm,
     MPI_Datatype row_t,
-    MPI_Datatype col_t);
+    MPI_Datatype col_t,
+    const struct neighbours * neighbours);
 
 #endif // HIPC_ASSESSMENT_EXCHANGER_H
