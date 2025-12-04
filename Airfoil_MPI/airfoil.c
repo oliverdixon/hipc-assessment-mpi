@@ -6,7 +6,6 @@
 #include <limits.h>
 #include <math.h>
 #include <mpi.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -53,7 +52,6 @@ int main(int argc, char **argv)
     region_initialise(&region, &instance);
     region_exchange(&region, MATRIX_FLAGS, &instance);
 
-    static const compute_t step_runtime = 0.003;
     static const compute_t max_simulation_runtime = 1.0;
     static const indexer_t sor_max_iterations = 100;
     static const compute_t sor_residual_epsilon = 0.001;
@@ -64,21 +62,19 @@ int main(int argc, char **argv)
 
     while (simulation_runtime < max_simulation_runtime) {
         // \Delta_t is fixed.
-        region_apply_boundary_conditions(&region); // Set boundary values.
-        region_compute_tentative_velocities(&region); // Compute F^{(n)} and G^{(n)}.
+        region_apply_boundary_conditions(&region);
+        region_compute_tentative_velocities(&region, &instance);
 
-        // TODO: need to do something to update tentative velocities before dependent Poisson source is computed.
-        // Probably don't need to do a full HX. Book indicates that values can be arbitrary (e.g. picked from existing).
-
+        // Exchange tentative velocities for computation of Poisson term.
         region_exchange(&region, MATRIX_TENTATIVE_VELOCITY_X, &instance);
         region_exchange(&region, MATRIX_TENTATIVE_VELOCITY_Y, &instance);
-        region_compute_poisson_source(&region); // Compute the RHS of the pressure equation.
+        region_compute_poisson_source(&region);
 
         compute_t latest_residual_norm = INT_MAX;
 
         for (indexer_t sor_iteration = 0; sor_iteration < sor_max_iterations; ++sor_iteration) {
-            region_sor_cycle(&region); // Perform an SOR cycle
-            region_exchange(&region, MATRIX_PRESSURE, &instance); // Exchange pressure values
+            region_sor_cycle(&region);
+            region_exchange(&region, MATRIX_PRESSURE, &instance);
 
             // Compute the partial residual summands and send to the master process.
             const compute_t local_residual = region_compute_partial_residual(&region);
@@ -97,11 +93,11 @@ int main(int argc, char **argv)
         }
 
         // Update and exchange the velocities.
-        region_update_velocities(&region);
+        region_update_velocities(&region, &instance);
         region_exchange(&region, MATRIX_VELOCITY_X, &instance);
         region_exchange(&region, MATRIX_VELOCITY_Y, &instance);
 
-        simulation_runtime += step_runtime;
+        simulation_runtime += instance.timestep_duration;
 
         if (instance.rank == 0 && step_iteration % output_freq == 0)
             printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime,

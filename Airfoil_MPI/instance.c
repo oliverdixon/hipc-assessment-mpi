@@ -2,10 +2,9 @@
 // Created by od641 on 18/11/2025.
 //
 
-#include "instance.h"
-
 #include <stdlib.h>
 
+#include "instance.h"
 #include "region.h"
 
 static MPI_Datatype create_dim2_type()
@@ -87,6 +86,7 @@ struct instance instance_create()
         .problem_size.x = 4.0,
         .problem_size.y = 1.0,
 
+        .timestep_duration = 0.003,
         .naca_specifier = {
             .maximum_camber = 2,
             .edge_distance = 4,

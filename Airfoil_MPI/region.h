@@ -124,7 +124,7 @@ void region_initialise(struct region *region, const struct instance *instance);
 
 void region_serialise_vtk(const struct region *region, const struct instance *instance, FILE *destination);
 
-void region_compute_tentative_velocities(const struct region * region);
+void region_compute_tentative_velocities(const struct region *region, const struct instance *instance);
 
 void region_compute_poisson_source(const struct region * region);
 
@@ -134,6 +134,6 @@ void region_exchange(struct region *region, enum matrix_identifier matrix, const
 
 compute_t region_compute_partial_residual(const struct region * region);
 
-void region_update_velocities(const struct region * region);
+void region_update_velocities(const struct region *region, const struct instance *instance);
 
 #endif // HIPC_ASSESSMENT_REGION_H

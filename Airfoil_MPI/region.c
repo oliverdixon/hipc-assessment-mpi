@@ -527,20 +527,19 @@ void region_apply_boundary_conditions(const struct region *const region)
         velocity_y[region->h_exterior.begin][v_idx] = velocity_y[region->h_exterior.begin + 1][v_idx];
 
         // Fluid freely flows out to the east
-        velocity_x[region->h_exterior.end - 1][v_idx] = velocity_x[region->h_exterior.end - 2][v_idx];
+        velocity_x[region->h_exterior.end - 2][v_idx] = velocity_x[region->h_exterior.end - 3][v_idx];
         velocity_y[region->h_exterior.end - 1][v_idx] = velocity_y[region->h_exterior.end - 2][v_idx];
     }
 
     for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx) {
         /*
-         * The vertical velocity approaches 0 at the north and south boundaries, but fluid flows freely in the
-         * horizontal direction.
-         */
-        velocity_y[h_idx][region->v_exterior.begin] = 0.0;
+         * The vertical velocity approaches zero at the north and south boundaries, but fluid flows freely in the
+         * horizontal direction. */
         velocity_y[h_idx][region->v_exterior.end - 2] = 0.0;
-
-        velocity_x[h_idx][region->v_exterior.begin] = velocity_x[h_idx][region->v_exterior.begin + 1];
         velocity_x[h_idx][region->v_exterior.end - 1] = velocity_x[h_idx][region->v_exterior.end - 2];
+
+        velocity_y[h_idx][region->v_exterior.begin] = 0.0;
+        velocity_x[h_idx][region->v_exterior.begin] = velocity_x[h_idx][region->v_exterior.begin + 1];
     }
 
     /*
@@ -598,56 +597,72 @@ void region_apply_boundary_conditions(const struct region *const region)
                 default:;
                 }
 
-    // Finally, fix the horizontal velocity at the western edge to have a continual flow of fluid into the simulation.
-    velocity_y[region->h_exterior.begin][region->v_exterior.begin] =
-            2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][region->v_exterior.begin];
+    if (region->region_flags & REGION_WEST_BOUNDARY) {
+        /*
+         * If we're on a western boundary, fix the western-edge velocities such that there is a continual flow of fluid
+         * into the simulation space.
+         */
+        velocity_y[region->h_exterior.begin][region->v_exterior.begin] =
+                2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][region->v_exterior.begin];
 
-    for (indexer_t v_cell_idx = region->v_interior.begin; v_cell_idx < region->v_interior.end; ++v_cell_idx) {
-        velocity_x[region->h_exterior.begin][v_cell_idx] = region->initial_velocity_x;
-        velocity_y[region->h_exterior.begin][v_cell_idx] =
-                2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][v_cell_idx];
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+            velocity_x[region->h_exterior.begin][v_idx] = region->initial_velocity_x;
+            velocity_y[region->h_exterior.begin][v_idx] = 2 * region->initial_velocity_y -
+                velocity_y[region->h_exterior.begin + 1][v_idx];
+        }
     }
 }
 
-void region_update_velocities(const struct region *const region)
+void region_update_velocities(const struct region *const region, const struct instance *instance)
 {
     /*
      * The pressure differential factors are the constants implied by the discretisation of the momentum equation. They
      * represent fixed-axis grid spacings, warped by the timestep duration, to numerically approximate the next velocity
      * values in terms of the computed pressures.
      */
-    const compute_t x_pressure_diff_factor = 0.003 * region->resolution; // TODO timestep duration
-    const compute_t y_pressure_diff_factor = 0.003 * region->resolution;
+    const compute_t x_pressure_diff_factor = instance->timestep_duration * region->resolution;
+    const compute_t y_pressure_diff_factor = instance->timestep_duration * region->resolution;
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+    const enum region_flags flags = region->region_flags;
+
+    // X velocities
+    indexer_t h_bound = flags & REGION_EAST_BOUNDARY ? region->h_interior.end - 4 : region->h_interior.end;
+    indexer_t v_bound = flags & REGION_SOUTH_BOUNDARY ? region->v_interior.end - 3 : region->v_interior.end;
+
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
             if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx + 1][v_idx] & CELL_FLUID)
                 region->velocity_x[h_idx][v_idx] = region->tentative_velocity_x[h_idx][v_idx] -
-                        (region->pressure[h_idx + 1][v_idx] - region->pressure[h_idx][v_idx]) * x_pressure_diff_factor;
+                    (region->pressure[h_idx + 1][v_idx] - region->pressure[h_idx][v_idx]) * x_pressure_diff_factor;
+
+    // Y velocities
+    h_bound = flags & REGION_EAST_BOUNDARY ? region->h_interior.end - 3 : region->h_interior.end;
+    v_bound = flags & REGION_SOUTH_BOUNDARY ? region->v_interior.end - 4 : region->v_interior.end;
+
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
             if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx][v_idx + 1] & CELL_FLUID)
                 region->velocity_y[h_idx][v_idx] = region->tentative_velocity_y[h_idx][v_idx] -
-                        (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
-        }
+                    (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
 }
 
-void region_compute_tentative_velocities(const struct region * const region)
+void region_compute_tentative_velocities(const struct region *const region, const struct instance *instance)
 {
+    static const compute_t reynolds = 500.0;
     static const double gamma = 0.9; // Upwind differencing factor in PDE discretisation
 
+    // Get local copies of pointers to avoid excessive dereferencing in loop.
     compute_t * const * const velocity_x = region->velocity_x;
     compute_t * const * const velocity_y = region->velocity_y;
     compute_t * const * const tentative_velocity_x = region->tentative_velocity_x;
     compute_t * const * const tentative_velocity_y = region->tentative_velocity_y;
     enum cell_flags * const * const flags = region->flags;
 
-    static const compute_t timestep_duration = 0.003; // TODO move into struct
-    static const compute_t reynolds = 500.0;
+    const compute_t quarter_resolution = region->resolution / 4.0;
+    const compute_t sq_resolution = region->resolution * region->resolution;
 
-    const compute_t x_grid_spacing = 1.0 / region->resolution; // TODO not this
-    const compute_t y_grid_spacing = 1.0 / region->resolution;
-
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end - 1; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) // TODO check
             if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx + 1][v_idx] & CELL_FLUID) {
 
                 const double self_advection_x =
@@ -660,8 +675,7 @@ void region_compute_tentative_velocities(const struct region * const region)
                         (velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx][v_idx]) -
                         gamma * fabs(velocity_x[h_idx - 1][v_idx] + velocity_x[h_idx][v_idx]) *
                         (velocity_x[h_idx - 1][v_idx] - velocity_x[h_idx][v_idx])
-                    ) /
-                        (4.0 * x_grid_spacing);
+                    ) * quarter_resolution;
 
                 const double cross_advection_y =
                     (
@@ -674,32 +688,27 @@ void region_compute_tentative_velocities(const struct region * const region)
                         gamma * fabs(velocity_y[h_idx][v_idx - 1] +
                             velocity_y[h_idx + 1][v_idx - 1]) *
                         (velocity_x[h_idx][v_idx - 1] - velocity_x[h_idx][v_idx])
-                    ) /
-                        (4.0 * y_grid_spacing);
+                    ) * quarter_resolution;
 
                 const double diffusion =
                     (
                         velocity_x[h_idx + 1][v_idx] -
                         2.0 * velocity_x[h_idx][v_idx] +
-                        velocity_x[h_idx - 1][v_idx]
-                    ) /
-                        (x_grid_spacing * x_grid_spacing) +
-                    (
+                        velocity_x[h_idx - 1][v_idx] +
                         velocity_x[h_idx][v_idx + 1] -
                         2.0 * velocity_x[h_idx][v_idx] +
                         velocity_x[h_idx][v_idx - 1]
-                    ) /
-                        (y_grid_spacing * y_grid_spacing);
+                    ) * sq_resolution;
 
-                tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx] + timestep_duration *
+                tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx] + instance->timestep_duration *
                     (diffusion / reynolds - self_advection_x - cross_advection_y);
 
             } else
                 // If both adjacent cells are not fluids, the velocity is unchanged.
                 tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx];
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end - 1; ++v_idx)
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
             if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx][v_idx + 1] & CELL_FLUID) {
 
                 const double cross_advection_x =
@@ -713,8 +722,7 @@ void region_compute_tentative_velocities(const struct region * const region)
                         gamma * fabs(velocity_x[h_idx - 1][v_idx] +
                             velocity_x[h_idx - 1][v_idx + 1]) *
                         (velocity_y[h_idx - 1][v_idx] - velocity_y[h_idx][v_idx])
-                    ) /
-                        (4.0 * x_grid_spacing);
+                    ) * quarter_resolution;
 
                 const double self_advection_y =
                     (
@@ -726,38 +734,46 @@ void region_compute_tentative_velocities(const struct region * const region)
                         (velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx][v_idx]) -
                         gamma * fabs(velocity_y[h_idx][v_idx - 1] + velocity_y[h_idx][v_idx]) *
                         (velocity_y[h_idx][v_idx - 1] - velocity_y[h_idx][v_idx])
-                    ) /
-                        (4.0 * y_grid_spacing);
+                    ) * quarter_resolution;
 
                 const double diffusion =
                     (
                         velocity_y[h_idx + 1][v_idx] -
                         2.0 * velocity_y[h_idx][v_idx] +
-                        velocity_y[h_idx - 1][v_idx]
-                    ) /
-                        (x_grid_spacing * x_grid_spacing) +
-                    (
+                        velocity_y[h_idx - 1][v_idx] +
                         velocity_y[h_idx][v_idx + 1] -
                         2.0 * velocity_y[h_idx][v_idx] +
                         velocity_y[h_idx][v_idx - 1]
-                    ) /
-                        (y_grid_spacing * y_grid_spacing);
+                    ) * sq_resolution;
 
-                tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx] + timestep_duration *
+                tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx] + instance->timestep_duration *
                     (diffusion / reynolds - cross_advection_x - self_advection_y);
 
             } else
                 // If both adjacent cells are not fluids, the velocity is unchanged.
                 tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx];
 
+    // TODO: move these boundary fixers to a separate function.
+    // TODO: are the pressure lines needed?
+
+    // F_{0, j} and F_{i_{max}, j}
+    // p_{0, j} and p_{i_{max}+1, j}
+    // for j = 1, ..., j_{max}
     for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
-        tentative_velocity_x[region->h_interior.begin][v_idx] = velocity_x[region->h_interior.begin][v_idx];
+        tentative_velocity_x[region->h_exterior.begin][v_idx] = velocity_x[region->h_exterior.begin][v_idx];
         tentative_velocity_x[region->h_interior.end - 1][v_idx] = velocity_x[region->h_interior.end - 1][v_idx];
+        region->pressure[region->h_exterior.begin][v_idx] = region->pressure[region->h_exterior.begin + 1][v_idx];
+        region->pressure[region->h_exterior.end - 1][v_idx] = region->pressure[region->h_interior.end - 1][v_idx];
     }
 
+    // G_{i, 0} and G_{i, j_{max}}
+    // p_{0, i} and p_{i, j_{max}+1}
+    // for i = 1, ..., i_{max}
     for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx) {
-        tentative_velocity_y[h_idx][region->v_interior.begin] = velocity_y[h_idx][region->v_interior.begin];
+        tentative_velocity_y[h_idx][region->v_exterior.begin] = velocity_y[h_idx][region->v_exterior.begin];
         tentative_velocity_y[h_idx][region->v_interior.end - 1] = velocity_y[h_idx][region->v_interior.end - 1];
+        region->pressure[h_idx][region->v_exterior.begin] = region->pressure[h_idx][region->v_exterior.begin + 1];
+        region->pressure[h_idx][region->v_exterior.end - 1] = region->pressure[h_idx][region->v_interior.end - 1];
     }
 }
 
