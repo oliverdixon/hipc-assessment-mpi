@@ -87,6 +87,7 @@ struct instance instance_create()
         .problem_size.y = 1.0,
 
         .timestep_duration = 0.003,
+        .sor_omega = 1.7, // See pg. 37 of Griebel for discussion of choosing this.
         .naca_specifier = {
             .maximum_camber = 2,
             .edge_distance = 4,

@@ -52,7 +52,7 @@ int main(int argc, char **argv)
     region_initialise(&region, &instance);
     region_exchange(&region, MATRIX_FLAGS, &instance);
 
-    static const compute_t max_simulation_runtime = 1.0;
+    static const compute_t max_simulation_runtime = 2.0;
     static const indexer_t sor_max_iterations = 100;
     static const compute_t sor_residual_epsilon = 0.001;
     static const indexer_t output_freq = 100;
@@ -68,16 +68,16 @@ int main(int argc, char **argv)
         // Exchange tentative velocities for computation of Poisson term.
         region_exchange(&region, MATRIX_TENTATIVE_VELOCITY_X, &instance);
         region_exchange(&region, MATRIX_TENTATIVE_VELOCITY_Y, &instance);
-        region_compute_poisson_source(&region);
+        region_compute_poisson_source(&region, &instance);
 
         compute_t latest_residual_norm = INT_MAX;
 
         for (indexer_t sor_iteration = 0; sor_iteration < sor_max_iterations; ++sor_iteration) {
-            region_sor_cycle(&region);
+            region_sor_cycle(&region, &instance);
             region_exchange(&region, MATRIX_PRESSURE, &instance);
 
             // Compute the partial residual summands and send to the master process.
-            const compute_t local_residual = region_compute_partial_residual(&region);
+            const compute_t local_residual = region_compute_poisson_residual(&region);
             compute_t residual_sum = 0.0;
             MPI_Reduce(&local_residual, &residual_sum, 1, MPI_DOUBLE, MPI_SUM, 0, instance.cartesian_comm);
 
