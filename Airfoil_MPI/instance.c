@@ -166,10 +166,10 @@ void instance_serialise_vtk(
 
     for (unsigned int rank_id = 0; rank_id < instance->count; ++rank_id)
         fprintf(destination,
-            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%02d%s\" />\n",
+            "\t\t<Piece Extent=\"%u %u %u %u 0 0\" Source=\"%s%0*d%s\" />\n",
             shifted_indents[rank_id].x, shifted_indents[rank_id].x + widths[rank_id] - 1,
             shifted_indents[rank_id].y, shifted_indents[rank_id].y + heights[rank_id] - 1,
-            subfile_prefix, rank_id, subfile_extension);
+            subfile_prefix, max_subfile_digits, rank_id, subfile_extension);
 
     fputs("\t</PRectilinearGrid>\n"
           "</VTKFile>\n", destination);
@@ -186,7 +186,8 @@ struct dim2 instance_translate_to_cells(const struct instance *instance, const s
         .y = points_source->y - instance->cartesian_pos.y
     };
 
-    return v;}
+    return v;
+}
 
 struct dim2 instance_translate_to_points(const struct instance *instance, const struct dim2 *cell_source)
 {

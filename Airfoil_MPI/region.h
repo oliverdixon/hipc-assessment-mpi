@@ -6,9 +6,8 @@
 #define HIPC_ASSESSMENT_REGION_H
 
 #include <mpi.h>
+#include <stdbool.h>
 #include <stdio.h>
-
-#include "exchanger.h"
 
 struct instance;
 
@@ -49,6 +48,36 @@ enum region_flags
     REGION_EAST_GHOST = 1 << 7,
 };
 
+enum matrix_identifier
+{
+    MATRIX_VELOCITY_X,
+    MATRIX_VELOCITY_Y,
+    MATRIX_TENTATIVE_VELOCITY_X,
+    MATRIX_TENTATIVE_VELOCITY_Y,
+    MATRIX_POISSON,
+    MATRIX_PRESSURE,
+    MATRIX_FLAGS,
+
+    MATRIX_TYPES_COUNT = 7
+};
+
+struct exchange_cache
+{
+    bool initialised;
+
+    const void * north_row;
+    void * north_ghost;
+
+    const void * south_row;
+    void * south_ghost;
+
+    const void * east_col;
+    void * east_ghost;
+
+    const void * west_col;
+    void * west_ghost;
+};
+
 struct region
 {
     compute_t *const *const velocity_x;
@@ -80,10 +109,7 @@ struct region
     MPI_Datatype flags_col_t;
     MPI_Datatype flags_row_t;
 
-    struct exchanger velocity_x_exchanger;
-    struct exchanger velocity_y_exchanger;
-    struct exchanger pressure_exchanger;
-    struct exchanger flags_exchanger;
+    struct exchange_cache exchange_cache[MATRIX_TYPES_COUNT];
 };
 
 struct region region_create(const struct instance *instance);
@@ -103,6 +129,8 @@ void region_compute_tentative_velocities(const struct region * region);
 void region_compute_poisson_source(const struct region * region);
 
 void region_sor_cycle(const struct region *region);
+
+void region_exchange(struct region *region, enum matrix_identifier matrix, const struct instance *instance);
 
 compute_t region_compute_partial_residual(const struct region * region);
 

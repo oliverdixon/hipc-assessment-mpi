@@ -9,9 +9,16 @@
 #include <stdlib.h>
 #include <strings.h>
 
-#include "exchanger.h"
 #include "instance.h"
 #include "region.h"
+
+enum exchanger_tags
+{
+    TAGS_NORTH,
+    TAGS_SOUTH,
+    TAGS_EAST,
+    TAGS_WEST
+};
 
 static MPI_Datatype create_row_t(
         const MPI_Aint column_count,
@@ -270,6 +277,86 @@ static enum region_flags compute_region_flags(
     return region_flags;
 }
 
+static const struct exchange_cache * initialise_exchanger_cache_compute(struct region * const region,
+    const enum matrix_identifier matrix)
+{
+    static compute_t dummy;
+    struct exchange_cache * const cache = &region->exchange_cache[matrix];
+
+    if (cache->initialised)
+        return cache; // Already initialised; nothing to do.
+
+    compute_t * const * data;
+
+    switch (matrix) {
+    case MATRIX_VELOCITY_X:
+        data = region->velocity_x;
+        break;
+    case MATRIX_VELOCITY_Y:
+        data = region->velocity_y;
+        break;
+    case MATRIX_TENTATIVE_VELOCITY_X:
+        data = region->tentative_velocity_x;
+        break;
+    case MATRIX_TENTATIVE_VELOCITY_Y:
+        data = region->tentative_velocity_y;
+        break;
+    case MATRIX_POISSON:
+        data = region->poisson_source;
+        break;
+    case MATRIX_PRESSURE:
+        data = region->pressure;
+        break;
+    default:
+        // Unsupported matrix type.
+        assert(0);
+    }
+
+    cache->north_row = &data[0][region->v_exterior.begin];
+    cache->north_ghost = region->region_flags & REGION_NORTH_GHOST ? &data[0][region->v_exterior.begin - 1] : &dummy;
+
+    cache->south_row = &data[0][region->v_exterior.end - 1];
+    cache->south_ghost = region->region_flags & REGION_SOUTH_GHOST ? &data[0][region->v_exterior.end] : &dummy;
+
+    cache->west_col = data[region->h_exterior.begin];
+    cache->west_ghost = region->region_flags & REGION_WEST_GHOST ? data[region->h_exterior.begin - 1] : &dummy;
+
+    cache->east_col = data[region->h_exterior.end - 1];
+    cache->east_ghost = region->region_flags & REGION_EAST_GHOST ? data[region->h_exterior.end] : &dummy;
+
+    cache->initialised = true;
+    return cache;
+}
+
+static const struct exchange_cache * initialise_exchanger_cache_flags(struct region * const region,
+    const enum matrix_identifier matrix)
+{
+    static enum cell_flags dummy;
+
+    assert(matrix == MATRIX_FLAGS); // Ensure supported matrix type.
+    struct exchange_cache * const cache = &region->exchange_cache[matrix];
+
+    if (cache->initialised)
+        return cache; // Already initialised; nothing to do.
+
+    enum cell_flags * const * const data = region->flags;
+
+    cache->north_row = &data[0][region->v_exterior.begin];
+    cache->north_ghost = region->region_flags & REGION_NORTH_GHOST ? &data[0][region->v_exterior.begin - 1] : &dummy;
+
+    cache->south_row = &data[0][region->v_exterior.end - 1];
+    cache->south_ghost = region->region_flags & REGION_SOUTH_GHOST ? &data[0][region->v_exterior.end] : &dummy;
+
+    cache->west_col = data[region->h_exterior.begin];
+    cache->west_ghost = region->region_flags & REGION_WEST_GHOST ? data[region->h_exterior.begin - 1] : &dummy;
+
+    cache->east_col = data[region->h_exterior.end - 1];
+    cache->east_ghost = region->region_flags & REGION_EAST_GHOST ? data[region->h_exterior.end] : &dummy;
+
+    cache->initialised = true;
+    return cache;
+}
+
 struct region region_create(const struct instance *const instance)
 {
     // Number of cells per unit-distance.
@@ -363,15 +450,10 @@ struct region region_create(const struct instance *const instance)
         .flags_col_t = create_column_t(allocations.y, MPI_INT)
     };
 
-    // Create exchangers for matrices that will require halo exchange across ranks.
-    region.velocity_x_exchanger = exchanger_create_compute(region.velocity_x, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
-    region.velocity_y_exchanger = exchanger_create_compute(region.velocity_y, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
-    region.pressure_exchanger = exchanger_create_compute(region.pressure, h_exterior, v_exterior,
-        instance->cartesian_comm, region.compute_row_t, region.compute_col_t, &instance->neighbours);
-    region.flags_exchanger = exchanger_create_flags(region.flags, h_exterior, v_exterior,
-        instance->cartesian_comm, region.flags_row_t, region.flags_col_t, &instance->neighbours);
+    // Indicate that no exchange caches have been initialised.
+    assert(sizeof(region.exchange_cache) / sizeof(region.exchange_cache[0]) == MATRIX_TYPES_COUNT);
+    for (indexer_t cache_idx = 0; cache_idx < MATRIX_TYPES_COUNT; ++cache_idx)
+        region.exchange_cache[cache_idx].initialised = false;
 
     // All cells are initially fluid. This count can be decremented throughout the simulation.
     region.fluid_cell_count = (region.h_interior.end - region.h_interior.begin) *
@@ -439,24 +521,26 @@ void region_apply_boundary_conditions(const struct region *const region)
     compute_t *const *const velocity_y = region->velocity_y;
     enum cell_flags *const *const flags = region->flags;
 
-    for (indexer_t v_cell_idx = region->v_exterior.begin; v_cell_idx < region->v_exterior.end; ++v_cell_idx) {
+    for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end; ++v_idx) {
         // Fluid freely flows in from the west
-        velocity_x[region->h_exterior.begin][v_cell_idx] = velocity_x[region->h_exterior.begin + 1][v_cell_idx];
-        velocity_y[region->h_exterior.begin][v_cell_idx] = velocity_y[region->h_exterior.begin + 1][v_cell_idx];
+        velocity_x[region->h_exterior.begin][v_idx] = velocity_x[region->h_exterior.begin + 1][v_idx];
+        velocity_y[region->h_exterior.begin][v_idx] = velocity_y[region->h_exterior.begin + 1][v_idx];
 
         // Fluid freely flows out to the east
-        velocity_x[region->h_exterior.end - 2][v_cell_idx] = velocity_x[region->h_exterior.end - 3][v_cell_idx];
-        velocity_y[region->h_exterior.end - 1][v_cell_idx] = velocity_y[region->h_exterior.end - 2][v_cell_idx];
+        velocity_x[region->h_exterior.end - 1][v_idx] = velocity_x[region->h_exterior.end - 2][v_idx];
+        velocity_y[region->h_exterior.end - 1][v_idx] = velocity_y[region->h_exterior.end - 2][v_idx];
     }
 
     for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end; ++h_idx) {
-        /* The vertical velocity approaches 0 at the north and south
-         * boundaries, but fluid flows freely in the horizontal direction */
-        velocity_y[h_idx][region->v_exterior.end - 2] = 0.0;
-        velocity_x[h_idx][region->v_exterior.end - 1] = velocity_x[h_idx][region->v_exterior.end - 2];
-
+        /*
+         * The vertical velocity approaches 0 at the north and south boundaries, but fluid flows freely in the
+         * horizontal direction.
+         */
         velocity_y[h_idx][region->v_exterior.begin] = 0.0;
+        velocity_y[h_idx][region->v_exterior.end - 2] = 0.0;
+
         velocity_x[h_idx][region->v_exterior.begin] = velocity_x[h_idx][region->v_exterior.begin + 1];
+        velocity_x[h_idx][region->v_exterior.end - 1] = velocity_x[h_idx][region->v_exterior.end - 2];
     }
 
     /*
@@ -525,7 +609,7 @@ void region_apply_boundary_conditions(const struct region *const region)
     }
 }
 
-void region_update_velocities(const struct region * const region)
+void region_update_velocities(const struct region *const region)
 {
     /*
      * The pressure differential factors are the constants implied by the discretisation of the momentum equation. They
@@ -535,26 +619,15 @@ void region_update_velocities(const struct region * const region)
     const compute_t x_pressure_diff_factor = 0.003 * region->resolution; // TODO timestep duration
     const compute_t y_pressure_diff_factor = 0.003 * region->resolution;
 
-    // TODO room for optimisation here.  Why iterator over everything twice?  Bounds are only slightly different.
-    indexer_t h_bound = region->h_interior.end - 4;
-    indexer_t v_bound = region->v_interior.end - 3;
-
-    // X velocities
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
             if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx + 1][v_idx] & CELL_FLUID)
                 region->velocity_x[h_idx][v_idx] = region->tentative_velocity_x[h_idx][v_idx] -
-                    (region->pressure[h_idx + 1][v_idx] - region->pressure[h_idx][v_idx]) * x_pressure_diff_factor;
-
-    h_bound = region->h_interior.end - 3;
-    v_bound = region->v_interior.end - 4;
-
-    // Y velocities
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < h_bound; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < v_bound; ++v_idx)
+                        (region->pressure[h_idx + 1][v_idx] - region->pressure[h_idx][v_idx]) * x_pressure_diff_factor;
             if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx][v_idx + 1] & CELL_FLUID)
                 region->velocity_y[h_idx][v_idx] = region->tentative_velocity_y[h_idx][v_idx] -
-                    (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
+                        (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
+        }
 }
 
 void region_compute_tentative_velocities(const struct region * const region)
@@ -573,8 +646,8 @@ void region_compute_tentative_velocities(const struct region * const region)
     const compute_t x_grid_spacing = 1.0 / region->resolution; // TODO not this
     const compute_t y_grid_spacing = 1.0 / region->resolution;
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) { // TODO check
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end - 1; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
             if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx + 1][v_idx] & CELL_FLUID) {
 
                 const double self_advection_x =
@@ -624,10 +697,9 @@ void region_compute_tentative_velocities(const struct region * const region)
             } else
                 // If both adjacent cells are not fluids, the velocity is unchanged.
                 tentative_velocity_x[h_idx][v_idx] = velocity_x[h_idx][v_idx];
-        }
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end - 1; ++v_idx)
             if (flags[h_idx][v_idx] & CELL_FLUID && flags[h_idx][v_idx + 1] & CELL_FLUID) {
 
                 const double cross_advection_x =
@@ -677,17 +749,14 @@ void region_compute_tentative_velocities(const struct region * const region)
             } else
                 // If both adjacent cells are not fluids, the velocity is unchanged.
                 tentative_velocity_y[h_idx][v_idx] = velocity_y[h_idx][v_idx];
-        }
 
-    // Tentative velocities along extreme vertical boundaries.
-    for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) { // TODO check
-        tentative_velocity_x[region->h_exterior.begin][v_idx] = velocity_x[region->h_exterior.begin][v_idx];
+    for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx) {
+        tentative_velocity_x[region->h_interior.begin][v_idx] = velocity_x[region->h_interior.begin][v_idx];
         tentative_velocity_x[region->h_interior.end - 1][v_idx] = velocity_x[region->h_interior.end - 1][v_idx];
     }
 
-    // Tentative velocities along extreme horizontal boundaries.
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) { // TODO check
-        tentative_velocity_y[h_idx][region->v_exterior.begin] = velocity_y[h_idx][region->v_exterior.begin];
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx) {
+        tentative_velocity_y[h_idx][region->v_interior.begin] = velocity_y[h_idx][region->v_interior.begin];
         tentative_velocity_y[h_idx][region->v_interior.end - 1] = velocity_y[h_idx][region->v_interior.end - 1];
     }
 }
@@ -701,8 +770,8 @@ void region_compute_poisson_source(const struct region * const region)
 
     static const compute_t timestep_duration = 0.003; // TODO move into struct
     
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_exterior.end; ++h_idx) // TODO check
-        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_exterior.end; ++v_idx) // TODO check
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
             if (flags[h_idx][v_idx] & CELL_FLUID) {
                 const compute_t x_tent_vel_diff = (tentative_velocity_x[h_idx][v_idx] -
                     tentative_velocity_x[h_idx - 1][v_idx]) * region->resolution;
@@ -761,6 +830,67 @@ void region_sor_cycle(const struct region *const region)
                     (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
 
             }
+}
+
+void region_exchange(
+    struct region *const region,
+    const enum matrix_identifier matrix,
+    const struct instance * const instance)
+{
+    const struct exchange_cache * exchanger = NULL;
+    MPI_Datatype row_t = NULL;
+    MPI_Datatype col_t = NULL;
+
+    switch (matrix) {
+    case MATRIX_VELOCITY_X:
+    case MATRIX_VELOCITY_Y:
+    case MATRIX_TENTATIVE_VELOCITY_X:
+    case MATRIX_TENTATIVE_VELOCITY_Y:
+    case MATRIX_POISSON:
+    case MATRIX_PRESSURE:
+        exchanger = initialise_exchanger_cache_compute(region, matrix);
+        row_t = region->compute_row_t;
+        col_t = region->compute_col_t;
+        break;
+    case MATRIX_FLAGS:
+        exchanger = initialise_exchanger_cache_flags(region, matrix);
+        row_t = region->flags_row_t;
+        col_t = region->flags_col_t;
+        break;
+    default: ;
+    }
+
+    // Ensure that we have selected a valid matrix.
+    assert(exchanger != NULL && row_t != NULL && col_t != NULL);
+
+    MPI_Request requests[4];
+    int request_idx = 0;
+
+    // North
+    MPI_Isendrecv(
+        exchanger->north_row, 1, row_t, instance->neighbours.north, TAGS_NORTH,
+        exchanger->north_ghost, 1, row_t, instance->neighbours.north, TAGS_SOUTH,
+        instance->cartesian_comm, &requests[request_idx++]);
+
+    // South
+    MPI_Isendrecv(
+        exchanger->south_row, 1, row_t, instance->neighbours.south, TAGS_SOUTH,
+        exchanger->south_ghost, 1, row_t, instance->neighbours.south, TAGS_NORTH,
+        instance->cartesian_comm, &requests[request_idx++]);
+
+    // East
+    MPI_Isendrecv(
+        exchanger->east_col, 1, col_t, instance->neighbours.east, TAGS_EAST,
+        exchanger->east_ghost, 1, col_t, instance->neighbours.east, TAGS_WEST,
+        instance->cartesian_comm, &requests[request_idx++]);
+
+    // West
+    MPI_Isendrecv(
+        exchanger->west_col, 1, col_t, instance->neighbours.west, TAGS_WEST,
+        exchanger->west_ghost, 1, col_t, instance->neighbours.west, TAGS_EAST,
+        instance->cartesian_comm, &requests[request_idx++]);
+
+    MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
 }
 
 compute_t region_compute_partial_residual(const struct region *const region)
