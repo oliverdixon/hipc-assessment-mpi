@@ -5,9 +5,12 @@
       "name": "viking",
       "cacheVariables": {
         "BUILD_AIRFOIL_CUDA": true,
-        "MPIEXEC_EXECUTABLE": "/opt/apps/eb/software/OpenMPI/5.0.8-GCC-14.3.0/bin/mpiexec",
+        "MPIEXEC_EXECUTABLE": "/opt/apps/eb/software/impi/2021.13.0-intel-compilers-2024.2.0/mpi/2021.13/bin/mpirun",
         "CMAKE_CUDA_COMPILER": "/opt/apps/eb/software/CUDA/12.9.0/bin/nvcc",
         "CMAKE_CUDA_ARCHITECTURES": "native"
+      },
+      "environment": {
+        "CC": "/opt/apps/eb/software/impi/2021.13.0-intel-compilers-2024.2.0/mpi/2021.13/bin/mpiicx"
       }
     },
     {

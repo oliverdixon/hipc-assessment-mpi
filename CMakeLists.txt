@@ -54,7 +54,9 @@ add_executable(Airfoil_MPI
 )
 
 set_property(TARGET Airfoil_MPI PROPERTY CMAKE_C_STANDARD 11)
-target_link_libraries(Airfoil_MPI PRIVATE MPI::MPI_C m)
+target_link_libraries(Airfoil_MPI PRIVATE MPI::MPI_C m OpenMP::OpenMP_C)
+target_compile_options(Airfoil_MPI PRIVATE -axCORE-AVX2 -fast -qopt-report)
+target_link_options(Airfoil_MPI PRIVATE -fuse-ld=lld)
 
 # CUDA
 

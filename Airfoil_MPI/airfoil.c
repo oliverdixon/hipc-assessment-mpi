@@ -6,12 +6,82 @@
 #include <limits.h>
 #include <math.h>
 #include <mpi.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "instance.h"
 #include "region.h"
+
+static void debug_print(
+    compute_t * const * const array,
+    const struct iterator h_bounds,
+    const struct iterator v_bounds,
+    const bool north_ghost,
+    const bool south_ghost,
+    const bool east_ghost,
+    const bool west_ghost,
+    FILE * const destination)
+{
+    const char h_delim[] = "           ";
+    const char v_delim[] = "--------";
+
+    if (north_ghost) {
+        if (west_ghost)
+            fputs(h_delim, destination);
+        for (indexer_t h_idx = h_bounds.begin; h_idx < h_bounds.end - 1; ++h_idx)
+            fprintf(destination, "%+10lf ", array[h_idx][0]);
+        fprintf(destination, "%+10lf%s\n", array[h_bounds.end - 1][0], h_delim);
+        if (west_ghost)
+            fputs(h_delim, destination);
+
+        for (indexer_t h_idx = h_bounds.begin; h_idx < h_bounds.end - 1; ++h_idx) {
+            fputs(v_delim, destination);
+            fputc(' ', destination);
+        }
+
+        fputs(v_delim, destination);
+        if (east_ghost)
+            fputs(h_delim, destination);
+        fputc('\n', destination);
+    }
+
+    for (indexer_t v_idx = v_bounds.begin; v_idx < v_bounds.end; ++v_idx) {
+        if (west_ghost)
+            fprintf(destination, "%+10lf | ", array[0][v_idx]);
+        for (indexer_t h_idx = h_bounds.begin; h_idx < h_bounds.end - 1; ++h_idx)
+            fprintf(destination, "%+10lf ", array[h_idx][v_idx]);
+        fprintf(destination, "%+10lf", array[h_bounds.end - 1][v_idx]);
+        if (east_ghost)
+            fprintf(destination, " | %+10lf", array[h_bounds.end][v_idx]);
+        fputc('\n', destination);
+    }
+
+    if (south_ghost) {
+        if (west_ghost)
+            fputs(h_delim, destination);
+        for (indexer_t h_idx = h_bounds.begin; h_idx < h_bounds.end - 1; ++h_idx) {
+            fputs(v_delim, destination);
+            fputc(' ', destination);
+        }
+
+        fputs(v_delim, destination);
+        if (east_ghost)
+            fputs(h_delim, destination);
+        fputc('\n', destination);
+        if (west_ghost)
+            fputs(h_delim, destination);
+
+        for (indexer_t h_idx = h_bounds.begin; h_idx < h_bounds.end - 1; ++h_idx)
+            fprintf(destination, "%+10lf ", array[h_idx][v_bounds.end]);
+        fprintf(destination, "%+10lf%s\n", array[h_bounds.end - 1][v_bounds.end], h_delim);
+
+        if (east_ghost)
+            fputs(h_delim, destination);
+        fputc('\n', destination);
+    }
+}
 
 static void serialise(const struct instance * const instance, const struct region * const region)
 {
@@ -52,7 +122,7 @@ int main(int argc, char **argv)
     region_initialise(&region, &instance);
     region_exchange(&region, MATRIX_FLAGS, &instance);
 
-    static const compute_t max_simulation_runtime = 2.0;
+    static const compute_t max_simulation_runtime = 1.0;
     static const indexer_t sor_max_iterations = 100;
     static const compute_t sor_residual_epsilon = 0.001;
     static const indexer_t output_freq = 100;

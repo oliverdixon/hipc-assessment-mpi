@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <omp.h>
 
 #include "instance.h"
 #include "region.h"
@@ -292,7 +293,7 @@ static const struct exchange_cache * initialise_exchanger_cache_compute(struct r
     if (cache->initialised)
         return cache; // Already initialised; nothing to do.
 
-    compute_t * const * data;
+    compute_t * const * data = NULL;
 
     switch (matrix) {
     case MATRIX_VELOCITY_X:
@@ -318,6 +319,7 @@ static const struct exchange_cache * initialise_exchanger_cache_compute(struct r
         assert(0);
     }
 
+    // ReSharper disable once CppDFANullDereference - null branch protected by assertion.
     cache->north_row = &data[0][region->v_exterior.begin];
     cache->north_ghost = region->region_flags & REGION_NORTH_GHOST ? &data[0][region->v_exterior.begin - 1] : &dummy;
 
@@ -413,49 +415,44 @@ static void sor_cycle_phase(const struct region *const region, const compute_t o
     const compute_t step_sq = region->derived_params.resolution_sq;
     const compute_t internal_weight = region->derived_params.internal_weight;
 
-    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx) {
-        // Align to correct parity for RB indexing. See Figure 2 of https://arxiv.org/abs/1401.0763.
-        indexer_t v_idx = region->v_interior.begin + (h_idx & 1 ^ (indexer_t) phase);
-        for (; v_idx < region->v_interior.end; v_idx += 2)
+    for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+        for (indexer_t h_idx = region->h_interior.begin + (phase - v_idx & 1); h_idx < region->h_interior.end; h_idx += 2) {
+            if ((region->flags[h_idx][v_idx] & CELL_FLUID_ALL) == 0)
+                continue;
 
-            if (region->flags[h_idx][v_idx] & CELL_FLUID_ALL) {
-
-                /*
-                 * Special case of other branch for cells surrounded by fluid in all directions.
-                 * I.e., \epsilon_i^{N,E,S,W} := 1. In this case, we can precompute the "internal weight", i.e. the
-                 * weight of a fully internal cell; that is, one wholly surrounded by fluids.
-                 */
-                const compute_t x_spatial = (region->pressure[h_idx + 1][v_idx] +
+            const compute_t x_spatial = (region->pressure[h_idx + 1][v_idx] +
                     region->pressure[h_idx - 1][v_idx]) * step_sq;
 
-                const compute_t y_spatial = (region->pressure[h_idx][v_idx + 1] +
-                    region->pressure[h_idx][v_idx - 1]) * step_sq;
+            const compute_t y_spatial = (region->pressure[h_idx][v_idx + 1] +
+                region->pressure[h_idx][v_idx - 1]) * step_sq;
 
-                region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + internal_weight *
-                    (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
+            region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + internal_weight *
+                (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
+        }
 
-            } else if (region->flags[h_idx][v_idx] & CELL_FLUID) {
+    for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+        for (indexer_t h_idx = region->h_interior.begin + (phase - v_idx & 1); h_idx < region->h_interior.end; h_idx += 2) {
+            if ((region->flags[h_idx][v_idx] & CELL_FLUID) == 0)
+                continue;
 
-                // Epsilon parameters indicate whether fluid lies in the cell in the corresponding direction.
-                const bool epsilon_east = !!(region->flags[h_idx + 1][v_idx] & CELL_FLUID);
-                const bool epsilon_west = !!(region->flags[h_idx - 1][v_idx] & CELL_FLUID);
-                const bool epsilon_north = !!(region->flags[h_idx][v_idx + 1] & CELL_FLUID);
-                const bool epsilon_south = !!(region->flags[h_idx][v_idx - 1] & CELL_FLUID);
+            // Epsilon parameters indicate whether fluid lies in the cell in the corresponding direction.
+            const bool epsilon_east = !!(region->flags[h_idx + 1][v_idx] & CELL_FLUID);
+            const bool epsilon_west = !!(region->flags[h_idx - 1][v_idx] & CELL_FLUID);
+            const bool epsilon_north = !!(region->flags[h_idx][v_idx + 1] & CELL_FLUID);
+            const bool epsilon_south = !!(region->flags[h_idx][v_idx - 1] & CELL_FLUID);
 
-                const compute_t weight = omega / ((epsilon_east + epsilon_west) * step_sq +
-                    (epsilon_north + epsilon_south) * step_sq);
+            const compute_t weight = omega / ((epsilon_east + epsilon_west) * step_sq +
+                (epsilon_north + epsilon_south) * step_sq);
 
-                const compute_t x_spatial = (epsilon_east * region->pressure[h_idx + 1][v_idx] +
-                    epsilon_west * region->pressure[h_idx - 1][v_idx]) * step_sq;
+            const compute_t x_spatial = (epsilon_east * region->pressure[h_idx + 1][v_idx] +
+                epsilon_west * region->pressure[h_idx - 1][v_idx]) * step_sq;
 
-                const compute_t y_spatial = (epsilon_north * region->pressure[h_idx][v_idx + 1] +
-                    epsilon_south * region->pressure[h_idx][v_idx - 1]) * step_sq;
+            const compute_t y_spatial = (epsilon_north * region->pressure[h_idx][v_idx + 1] +
+                epsilon_south * region->pressure[h_idx][v_idx - 1]) * step_sq;
 
-                region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + weight *
-                    (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
-
-            }
-    }
+            region->pressure[h_idx][v_idx] = (1 - omega) * region->pressure[h_idx][v_idx] + weight *
+                (x_spatial + y_spatial - region->poisson_source[h_idx][v_idx]);
+        }
 }
 
 struct region region_create(const struct instance *const instance)
@@ -906,8 +903,8 @@ void region_exchange(
     const struct instance * const instance)
 {
     const struct exchange_cache * exchanger = NULL;
-    MPI_Datatype row_t = NULL;
-    MPI_Datatype col_t = NULL;
+    MPI_Datatype row_t = 0;
+    MPI_Datatype col_t = 0;
 
     switch (matrix) {
     case MATRIX_VELOCITY_X:
@@ -931,32 +928,32 @@ void region_exchange(
     // Ensure that we have selected a valid matrix.
     assert(exchanger != NULL && row_t != NULL && col_t != NULL);
 
-    MPI_Request requests[4];
+    MPI_Request requests[8];
     int request_idx = 0;
 
     // North
-    MPI_Isendrecv(
-        exchanger->north_row, 1, row_t, instance->neighbours.north, TAGS_NORTH,
-        exchanger->north_ghost, 1, row_t, instance->neighbours.north, TAGS_SOUTH,
-        instance->cartesian_comm, &requests[request_idx++]);
+    MPI_Isend(exchanger->north_row, 1, row_t, instance->neighbours.north, TAGS_NORTH, instance->cartesian_comm,
+        &requests[request_idx++]);
+    MPI_Irecv(exchanger->north_ghost, 1, row_t, instance->neighbours.north, TAGS_SOUTH, instance->cartesian_comm,
+        &requests[request_idx++]);
 
     // South
-    MPI_Isendrecv(
-        exchanger->south_row, 1, row_t, instance->neighbours.south, TAGS_SOUTH,
-        exchanger->south_ghost, 1, row_t, instance->neighbours.south, TAGS_NORTH,
-        instance->cartesian_comm, &requests[request_idx++]);
+    MPI_Isend(exchanger->south_row, 1, row_t, instance->neighbours.south, TAGS_SOUTH, instance->cartesian_comm,
+        &requests[request_idx++]);
+    MPI_Irecv(exchanger->south_ghost, 1, row_t, instance->neighbours.south, TAGS_NORTH, instance->cartesian_comm,
+        &requests[request_idx++]);
 
     // East
-    MPI_Isendrecv(
-        exchanger->east_col, 1, col_t, instance->neighbours.east, TAGS_EAST,
-        exchanger->east_ghost, 1, col_t, instance->neighbours.east, TAGS_WEST,
-        instance->cartesian_comm, &requests[request_idx++]);
+    MPI_Isend(exchanger->east_col, 1, col_t, instance->neighbours.east, TAGS_EAST, instance->cartesian_comm,
+        &requests[request_idx++]);
+    MPI_Irecv(exchanger->east_ghost, 1, col_t, instance->neighbours.east, TAGS_WEST, instance->cartesian_comm,
+        &requests[request_idx++]);
 
     // West
-    MPI_Isendrecv(
-        exchanger->west_col, 1, col_t, instance->neighbours.west, TAGS_WEST,
-        exchanger->west_ghost, 1, col_t, instance->neighbours.west, TAGS_EAST,
-        instance->cartesian_comm, &requests[request_idx++]);
+    MPI_Isend(exchanger->west_col, 1, col_t, instance->neighbours.west, TAGS_WEST, instance->cartesian_comm,
+        &requests[request_idx++]);
+    MPI_Irecv(exchanger->west_ghost, 1, col_t, instance->neighbours.west, TAGS_EAST, instance->cartesian_comm,
+        &requests[request_idx++]);
 
     MPI_Waitall(request_idx, requests, MPI_STATUSES_IGNORE);
 }
