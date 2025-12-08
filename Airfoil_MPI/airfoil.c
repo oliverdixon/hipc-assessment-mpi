@@ -130,8 +130,12 @@ int main(int argc, char **argv)
     compute_t simulation_runtime = 0.0;
     indexer_t step_iteration = 0;
 
+    // Collate the total fluid cell count, required when computing the L_2 residual norms.
+    unsigned int fluid_cell_sum = 0;
+    MPI_Allreduce(&region.fluid_cell_count, &fluid_cell_sum, 1, MPI_UNSIGNED, MPI_SUM, instance.cartesian_comm);
+
     while (simulation_runtime < max_simulation_runtime) {
-        // \Delta_t is fixed.
+        // \Delta_t timestep is fixed.
         region_apply_boundary_conditions(&region);
         region_compute_tentative_velocities(&region, &instance);
 
@@ -140,30 +144,18 @@ int main(int argc, char **argv)
         region_exchange(&region, MATRIX_TENTATIVE_VELOCITY_Y, &instance);
         region_compute_poisson_source(&region, &instance);
 
-        compute_t latest_residual_norm = INT_MAX;
+        compute_t residual = INT_MAX;
 
         for (indexer_t sor_iteration = 0; sor_iteration < sor_max_iterations; ++sor_iteration) {
+            // Perform an SOR cycle and halo-exchange the pressure matrix.
             region_sor_cycle(&region, &instance);
-            region_exchange(&region, MATRIX_PRESSURE, &instance);
 
-            // Compute the partial residual summands and send to the master process.
-            const compute_t local_residual = region_compute_poisson_residual(&region);
-            compute_t residual_sum = 0.0;
-            unsigned int fluid_cell_sum = 0;
+            // Compute the global residual L_2 norm given the cumulative residual and total fluid cell count.
+            residual = region_compute_poisson_residual(&region);
+            MPI_Allreduce(MPI_IN_PLACE, &residual, 1, MPI_COMPUTE, MPI_SUM, instance.cartesian_comm);
+            residual = residual / fluid_cell_sum;
 
-            MPI_Reduce(&local_residual, &residual_sum, 1, MPI_DOUBLE, MPI_SUM, 0, instance.cartesian_comm);
-            MPI_Reduce(&region.fluid_cell_count, &fluid_cell_sum, 1, MPI_UNSIGNED, MPI_SUM, 0, instance.cartesian_comm);
-
-            if (instance.rank == 0)
-                // Master process computes the residual L_2 norm and broadcasts back to slaves.
-                // TODO: could we use Allreduce?
-                // TODO: why does serial variant take sum of pressure squares?
-                residual_sum = sqrt(residual_sum / fluid_cell_sum);
-
-            MPI_Bcast(&residual_sum, 1, MPI_DOUBLE, 0, instance.cartesian_comm);
-            latest_residual_norm = residual_sum;
-
-            if (residual_sum < sor_residual_epsilon)
+            if (fabs(residual) < sor_residual_epsilon * sor_residual_epsilon)
                 break;
         }
 
@@ -175,8 +167,7 @@ int main(int argc, char **argv)
         simulation_runtime += instance.timestep_duration;
 
         if (instance.rank == 0 && step_iteration % output_freq == 0)
-            printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime,
-                latest_residual_norm);
+            printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime, residual);
 
         ++step_iteration;
     }

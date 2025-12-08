@@ -5,8 +5,12 @@
 #ifndef HIPC_ASSESSMENT_TYPES_H
 #define HIPC_ASSESSMENT_TYPES_H
 
+#include <mpi.h>
+
 typedef unsigned int indexer_t;
 typedef double compute_t;
+
+#define MPI_COMPUTE (MPI_DOUBLE)
 
 struct iterator
 {

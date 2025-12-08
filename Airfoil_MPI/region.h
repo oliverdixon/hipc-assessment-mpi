@@ -205,7 +205,7 @@ void region_compute_poisson_source(const struct region *region, const struct ins
  * @param region The region containing the pressure matrix on which SOR should be performed.
  * @param instance The instance managing the region.
  */
-void region_sor_cycle(const struct region *region, const struct instance *instance);
+void region_sor_cycle(struct region *region, const struct instance *instance);
 
 /**
  * Perform a halo exchange on region data for its neighbours on the 2D cartesian grid: north, south, east, and west.

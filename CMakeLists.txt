@@ -54,9 +54,19 @@ add_executable(Airfoil_MPI
 )
 
 set_property(TARGET Airfoil_MPI PROPERTY CMAKE_C_STANDARD 11)
-target_link_libraries(Airfoil_MPI PRIVATE MPI::MPI_C m OpenMP::OpenMP_C)
-target_compile_options(Airfoil_MPI PRIVATE -axCORE-AVX2 -fast -qopt-report)
-target_link_options(Airfoil_MPI PRIVATE -fuse-ld=lld)
+target_link_libraries(Airfoil_MPI PRIVATE MPI::MPI_C m)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Intel")
+    target_link_options(Airfoil_MPI PRIVATE -fuse-ld=lld)
+    target_compile_options(Airfoil_MPI PRIVATE
+            -axCORE-AVX2
+            -fast
+            -Rpass=loop-vectorize
+            -Rpass-analysis=loop-vectorize
+            -Rpass-missed=loop-vectorize
+            -fsave-optimization-record
+    )
+endif ()
 
 # CUDA
 

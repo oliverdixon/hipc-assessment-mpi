@@ -564,8 +564,8 @@ struct region region_create(const struct instance *const instance)
         .initial_flag = CELL_FLUID,
 
         // Create MPI types for reliable data transport.
-        .compute_row_t = create_row_t(allocations.x, allocations.y, MPI_DOUBLE, sizeof(compute_t)),
-        .compute_col_t = create_column_t(allocations.y, MPI_DOUBLE),
+        .compute_row_t = create_row_t(allocations.x, allocations.y, MPI_COMPUTE, sizeof(compute_t)),
+        .compute_col_t = create_column_t(allocations.y, MPI_COMPUTE),
         .flags_row_t = create_row_t(allocations.x, allocations.y, MPI_INT, sizeof(enum cell_flags)),
         .flags_col_t = create_column_t(allocations.y, MPI_INT),
 
@@ -906,7 +906,7 @@ void region_compute_poisson_source(const struct region *const region, const stru
             }
 }
 
-void region_sor_cycle(const struct region *const region, const struct instance *instance)
+void region_sor_cycle(struct region *const region, const struct instance *instance)
 {
     /*
      * Perform red-black SOR to reduce data dependencies. If tracing the computation over the interior pressure grid,
@@ -915,7 +915,9 @@ void region_sor_cycle(const struct region *const region, const struct instance *
      */
 
     sor_cycle_phase(region, instance->sor_omega, SOR_RED);
+    region_exchange(region, MATRIX_PRESSURE, instance);
     sor_cycle_phase(region, instance->sor_omega, SOR_BLACK);
+    region_exchange(region, MATRIX_PRESSURE, instance);
 }
 
 void region_exchange(
