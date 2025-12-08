@@ -7,3 +7,6 @@ Airfoil_MPI/valgrind.supp
 
 .idea/runConfigurations
 .idea/cmake.xml
+
+# Intel Advisor Projects
+Airfoil_MPI/airfoil_mpi

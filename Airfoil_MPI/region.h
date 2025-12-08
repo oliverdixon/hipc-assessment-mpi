@@ -96,7 +96,6 @@ struct exchange_cache
 struct cached_parameters
 {
     const compute_t resolution_sq;
-    const compute_t internal_weight;
 };
 
 /**

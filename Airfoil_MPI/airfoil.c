@@ -149,11 +149,16 @@ int main(int argc, char **argv)
             // Compute the partial residual summands and send to the master process.
             const compute_t local_residual = region_compute_poisson_residual(&region);
             compute_t residual_sum = 0.0;
+            unsigned int fluid_cell_sum = 0;
+
             MPI_Reduce(&local_residual, &residual_sum, 1, MPI_DOUBLE, MPI_SUM, 0, instance.cartesian_comm);
+            MPI_Reduce(&region.fluid_cell_count, &fluid_cell_sum, 1, MPI_UNSIGNED, MPI_SUM, 0, instance.cartesian_comm);
 
             if (instance.rank == 0)
                 // Master process computes the residual L_2 norm and broadcasts back to slaves.
-                residual_sum = sqrt(residual_sum);
+                // TODO: could we use Allreduce?
+                // TODO: why does serial variant take sum of pressure squares?
+                residual_sum = sqrt(residual_sum / fluid_cell_sum);
 
             MPI_Bcast(&residual_sum, 1, MPI_DOUBLE, 0, instance.cartesian_comm);
             latest_residual_norm = residual_sum;
