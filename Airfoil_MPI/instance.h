@@ -36,7 +36,7 @@ struct instance
     MPI_Datatype dim2_t;
 };
 
-struct instance instance_create();
+struct instance *instance_create();
 
 void instance_destroy(struct instance *instance);
 

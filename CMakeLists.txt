@@ -78,7 +78,12 @@ if (BUILD_AIRFOIL_CUDA)
 
     add_executable(Airfoil_CUDA
             Airfoil_CUDA/airfoil.cu
+            Airfoil_CUDA/instance.cu
+            Airfoil_CUDA/instance.h
+            Airfoil_CUDA/types.h
     )
 
     set_property(TARGET Airfoil_CUDA PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+
+    add_executable(OccupanyTest Airfoil_CUDA/occupany_test.cu)
 endif()
