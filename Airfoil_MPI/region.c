@@ -1038,6 +1038,7 @@ void region_initialise(struct region *const region, const struct instance *const
 
     write_initial_extreme_boundaries(region);
 
+    // TODO: probably need a barrier (likely HX) here, as we're reading into other ranks' spaces after they write boundaries.
     // Mask in additional directional indicator flags for non-fluid cells, describing presence of nearby fluid cells.
     enum cell_flags * const * const flags = region->flags;
 

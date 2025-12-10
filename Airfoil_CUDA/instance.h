@@ -66,11 +66,13 @@ instance *instance_create();
 
 void instance_destroy(instance *instance);
 
-__global__ void instance_set_extreme_boundaries(const instance *instance);
-
-__global__ void instance_set_airfoil_boundaries(const instance *instance);
+__global__ void instance_set_boundaries(const instance *instance);
 
 __global__ void instance_compute_body_indices(const instance * instance);
+
+__global__ void instance_apply_boundary_conditions(const instance * instance);
+
+__global__ void instance_set_neighbouring_flags(const instance * instance);
 
 void instance_device_to_host(const instance *instance);
 

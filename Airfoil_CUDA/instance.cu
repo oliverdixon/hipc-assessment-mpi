@@ -119,7 +119,62 @@ __global__ void instance_compute_body_indices(const instance *const instance)
     instance->v_body_bounds[x_idx] = bounds;
 }
 
-__global__ void instance_set_extreme_boundaries(const instance *const instance)
+__global__ void instance_apply_boundary_conditions(const instance *const instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x >= instance->extents.x || idx.y >= instance->extents.y)
+        return;
+
+    const std::size_t v_basis = instance->extents.x * idx.y;
+    const data * const data = &instance->device;
+
+    if (idx.x == 0) {
+        // Fluid freely flows in from the west
+        data->velocity_x[v_basis] = instance->device.velocity_x[v_basis + 1];
+        data->velocity_y[v_basis] = instance->device.velocity_y[v_basis + 1];
+    } else if (idx.x == instance->extents.x - 1) {
+        // Fluid freely flows out to the east
+        data->velocity_x[v_basis + idx.x - 1] = data->velocity_x[v_basis + idx.x - 2];
+        data->velocity_y[v_basis + idx.x] = data->velocity_x[v_basis + idx.x - 1];
+    }
+}
+
+__global__ void instance_set_neighbouring_flags(const instance *const instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x >= instance->extents.x || idx.y >= instance->extents.y)
+        return;
+
+    const std::size_t v_basis = instance->extents.x * idx.y;
+    const std::size_t flat_idx = idx.x + v_basis;
+    cell_flags * const flags = instance->device.flags;
+
+    /*
+     * None of the following reads can be out-of-bounds, as there is a buffer of boundary cells around the allocation.
+     * That is, any fluid cell will have, in the most extreme case (interior corners), one border cell in each
+     * direction.
+     */
+    if (!(flags[flat_idx] & CELL_FLUID)) {
+        if (flags[flat_idx - 1] & CELL_FLUID)
+            flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_WEST);
+        if (flags[flat_idx + 1] & CELL_FLUID)
+            flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_EAST);
+        if (flags[flat_idx - instance->extents.x] & CELL_FLUID)
+            flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_SOUTH);
+        if (flags[flat_idx + instance->extents.x] & CELL_FLUID)
+            flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_NORTH);
+    }
+}
+
+__global__ void instance_set_boundaries(const instance *const instance)
 {
     const dim2 idx = {
         .x = blockIdx.x * blockDim.x + threadIdx.x,

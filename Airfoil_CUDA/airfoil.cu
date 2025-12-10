@@ -18,9 +18,26 @@ int main()
     };
 
     safe_cuda(cudaDeviceSynchronize()); // Wait for airfoil body indices to be computed for each column.
-    instance_set_extreme_boundaries<<<grid_size, block_size>>>(instance);
+    instance_set_boundaries<<<grid_size, block_size>>>(instance);
 
-    safe_cuda(cudaDeviceSynchronize()); // Wait for finalised data beforing transferring back to the host.
+    safe_cuda(cudaDeviceSynchronize()); // Wait for initial boundaries to be set.
+    instance_set_neighbouring_flags<<<grid_size, block_size>>>(instance);
+
+    static const compute_t max_simulation_runtime = 1.0;
+    static const indexer_t sor_max_iterations = 100;
+    static const compute_t sor_residual_epsilon = 0.001;
+    static const indexer_t output_freq = 100;
+
+    compute_t simulation_runtime = 0.0;
+    indexer_t step_iteration = 0;
+
+    safe_cuda(cudaDeviceSynchronize()); // Wait for boundaries to be finalised.
+    while (simulation_runtime < max_simulation_runtime) {
+        instance_apply_boundary_conditions<<<grid_size, block_size>>>(instance);
+        break; // TODO
+    }
+
+    safe_cuda(cudaDeviceSynchronize()); // Wait for finalised data before transferring back to the host.
     instance_device_to_host(instance);
 
     const cell_flags * const data = instance->host.flags;

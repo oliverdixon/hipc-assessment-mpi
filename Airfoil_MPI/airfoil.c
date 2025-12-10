@@ -137,6 +137,7 @@ int main(int argc, char **argv)
     while (simulation_runtime < max_simulation_runtime) {
         // \Delta_t timestep is fixed.
         region_apply_boundary_conditions(&region);
+        // TODO: possibly need HX of velocities here? Since they can be changed following the boundary conditions.
         region_compute_tentative_velocities(&region, &instance);
 
         // Exchange tentative velocities for computation of Poisson term.
@@ -173,6 +174,14 @@ int main(int argc, char **argv)
     }
 
     serialise(&instance, &region);
+
+    // TODO remove.
+    char buf[16];
+    sprintf(buf, "./v-%02d", instance.rank);
+    FILE * fp = fopen(buf, "w");
+    debug_print(region.velocity_x, region.h_exterior, region.v_exterior, region.region_flags & REGION_NORTH_GHOST,
+        region.region_flags & REGION_SOUTH_GHOST, false, false, fp);
+    fclose(fp);
 
     region_destroy(&region);
     instance_destroy(&instance);
