@@ -30,13 +30,29 @@ int main()
 
     while (simulation_runtime < max_simulation_runtime) {
         instance_apply_boundary_conditions<<<grid_size, block_size>>>(instance);
+        instance_compute_tentative_velocities<<<grid_size, block_size>>>(instance);
+        instance_compute_poisson_source<<<grid_size, block_size>>>(instance);
+
+        compute_t residual = std::numeric_limits<compute_t>::max();
+
+        for (indexer_t sor_iteration = 0; sor_iteration < sor_max_iterations; ++sor_iteration) {
+            instance_perform_sor_cycle<<<grid_size, block_size>>>(instance);
+            instance_compute_local_residual<<<grid_size, block_size>>>(instance);
+            // TODO: reduction in shared memory for global norm of residual
+            // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+
+            if (std::fabs(residual) < sor_residual_epsilon * sor_residual_epsilon)
+                break;
+        }
+
+        instance_update_velocities<<<grid_size, block_size>>>(instance);
+        simulation_runtime += instance->timestep_duration;
 
         break; // TODO
     }
 
     instance_device_to_host(instance);
     instance_serialise(instance);
-
     instance_destroy(instance);
 
     return 0;

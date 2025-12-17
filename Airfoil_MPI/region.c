@@ -727,6 +727,7 @@ void region_apply_boundary_conditions(const struct region *const region)
          * If we're on a western boundary, fix the western-edge velocities such that there is a continual flow of fluid
          * into the simulation space.
          */
+        // TODO: is this first assignment needed?
         velocity_y[region->h_exterior.begin][region->v_exterior.begin] =
                 2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][region->v_exterior.begin];
 

@@ -77,6 +77,14 @@ __global__ void instance_set_neighbouring_flags(const instance * instance);
 
 __global__ void instance_compute_tentative_velocities(const instance * instance);
 
+__global__ void instance_compute_poisson_source(const instance * instance);
+
+__global__ void instance_perform_sor_cycle(const instance * instance);
+
+__global__ void instance_compute_local_residual(const instance * instance);
+
+__global__ void instance_update_velocities(const instance * instance);
+
 void instance_device_to_host(const instance *instance);
 
 void instance_serialise(const instance* instance);

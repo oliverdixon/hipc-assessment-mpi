@@ -143,6 +143,93 @@ __global__ void instance_apply_boundary_conditions(const instance *const instanc
         data->velocity_x[v_basis + idx.x - 1] = data->velocity_x[v_basis + idx.x - 2];
         data->velocity_y[v_basis + idx.x] = data->velocity_x[v_basis + idx.x - 1];
     }
+    
+    /*
+     * At the north and south boundaries, the vertical velocity approaches zero and fluid flows freely on the
+     * horizontal.
+     */
+    if (idx.y == 0) {
+        const indexer_t north_idx_basis = idx.x;
+        data->velocity_x[north_idx_basis] = data->velocity_x[north_idx_basis + instance->extents.x];
+        data->velocity_y[north_idx_basis] = 0.0;
+    } else if (idx.y == instance->extents.y - 1) {
+        const indexer_t south_idx_basis = idx.x + instance->extents.x * (instance->extents.y - 1);
+        data->velocity_x[south_idx_basis] = data->velocity_x[south_idx_basis - instance->extents.x];
+        data->velocity_y[south_idx_basis - instance->extents.x] = 0.0;
+    }
+    
+    if (data->flags[v_basis + idx.x] & CELL_FLUID_ALL) {
+        const indexer_t idx_central = idx.x + instance->extents.x * idx.y;
+
+        const indexer_t idx_north = idx.x + instance->extents.x * (idx.y - 1);
+        const indexer_t idx_south = idx.x + instance->extents.x * (idx.y + 1);
+        const indexer_t idx_west = idx.x - 1 + instance->extents.x * idx.y;
+        const indexer_t idx_east = idx.x + 1 + instance->extents.x * idx.y;
+
+        const indexer_t idx_northeast = idx.x + 1 + instance->extents.x * (idx.y - 1);
+        const indexer_t idx_southwest = idx.x - 1 + instance->extents.x * (idx.y + 1);
+        const indexer_t idx_northwest = idx.x - 1 + instance->extents.x * (idx.y - 1);
+
+        switch (data->flags[v_basis + idx.x]) {
+        case CELL_FLUID_NORTH:
+            data->velocity_y[idx_central] = 0.0;
+            data->velocity_x[idx_central] = -data->velocity_x[idx_south];
+            data->velocity_x[idx_west] = -data->velocity_x[idx_southwest];
+            break;
+        case CELL_FLUID_EAST:
+            data->velocity_x[idx_central] = 0.0;
+            data->velocity_y[idx_central] = -data->velocity_y[idx_east];
+            data->velocity_y[idx_north] = -data->velocity_y[idx_northeast];
+            break;
+        case CELL_FLUID_SOUTH:
+            data->velocity_y[idx_north] = 0.0;
+            data->velocity_x[idx_central] = -data->velocity_x[idx_north];
+            data->velocity_x[idx_west] = -data->velocity_x[idx_northwest];
+            break;
+        case CELL_FLUID_WEST:
+            data->velocity_x[idx_west] = 0.0;
+            data->velocity_y[idx_central] = -data->velocity_y[idx_west];
+            data->velocity_y[idx_north] = -data->velocity_y[idx_northwest];
+            break;
+        case CELL_FLUID_NORTHEAST:
+            data->velocity_y[idx_central] = 0.0;
+            data->velocity_x[idx_central] = 0.0;
+            data->velocity_y[idx_north] = -data->velocity_y[idx_northeast];
+            data->velocity_x[idx_west] = -data->velocity_x[idx_southwest];
+            break;
+        case CELL_FLUID_SOUTHEAST:
+            data->velocity_y[idx_north] = 0.0;
+            data->velocity_x[idx_central] = 0.0;
+            data->velocity_y[idx_central] = -data->velocity_y[idx_east];
+            data->velocity_x[idx_west] = -data->velocity_x[idx_northwest];
+            break;
+        case CELL_FLUID_SOUTHWEST:
+            data->velocity_y[idx_north] = 0.0;
+            data->velocity_x[idx_west] = 0.0;
+            data->velocity_y[idx_central] = -data->velocity_y[idx_west];
+            data->velocity_x[idx_central] = -data->velocity_x[idx_north];
+            break;
+        case CELL_FLUID_NORTHWEST:
+            data->velocity_y[idx_central] = 0.0;
+            data->velocity_x[idx_west] = 0.0;
+            data->velocity_y[idx_north] = -data->velocity_y[idx_northwest];
+            data->velocity_x[idx_central] = -data->velocity_x[idx_south];
+            break;
+        default:;
+        }
+    }
+
+    if (idx.x == 0) {
+        /*
+         * If we're on a western boundary, fix the western-edge velocities such that there is a continual flow of fluid
+         * into the simulation space.
+         */
+
+        const indexer_t west_anchored_idx = instance->extents.x * idx.y;
+        data->velocity_x[west_anchored_idx] = instance->initial_velocity_x;
+        data->velocity_y[west_anchored_idx] = 2 * instance->initial_velocity_y -
+            data->velocity_y[west_anchored_idx + 1];
+    }
 }
 
 __global__ void instance_set_neighbouring_flags(const instance *const instance)
@@ -179,7 +266,7 @@ __global__ void instance_compute_tentative_velocities(const instance *instance)
     };
 
     // TODO maybe this condition is too restrictive.
-    if (idx.x < 1 || idx.x >= instance->extents.x - 1 || idx.y < 1 || idx.y >= instance->extents.y)
+    if (idx.x < 1 || idx.x >= instance->extents.x - 1 || idx.y < 1 || idx.y >= instance->extents.y - 1)
         return;
     
     static constexpr compute_t reynolds = 500.0;
@@ -286,6 +373,139 @@ __global__ void instance_compute_tentative_velocities(const instance *instance)
     } else
         // If both adjacent cells are not fluids, the velocity is unchanged.
         data->tentative_velocity_y[idx_central] = velocity_y[idx_central];
+}
+
+__global__ void instance_compute_poisson_source(const instance *const instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x > instance->extents.x - 1 || idx.y > instance->extents.y - 1)
+        return;
+
+    compute_t * const velocity_x = instance->device.velocity_x;
+    compute_t * const velocity_y = instance->device.velocity_y;
+    compute_t * const tentative_velocity_x = instance->device.tentative_velocity_x;
+    compute_t * const tentative_velocity_y = instance->device.tentative_velocity_y;
+    compute_t * const pressure = instance->device.pressure;
+
+    if (idx.x == 0) {
+        const indexer_t west_anchored_idx = instance->extents.x * idx.y;
+        tentative_velocity_x[west_anchored_idx] = velocity_x[west_anchored_idx];
+        pressure[west_anchored_idx] = pressure[west_anchored_idx + 1];
+    }
+
+    else if (idx.x == instance->extents.x - 1) {
+        const indexer_t east_anchored_idx = instance->extents.x * idx.y + instance->extents.x;
+        tentative_velocity_x[east_anchored_idx] = velocity_x[east_anchored_idx];
+        pressure[east_anchored_idx] = pressure[east_anchored_idx - 1];
+    }
+
+    if (idx.y == 0) {
+        const indexer_t north_anchored_idx = idx.x;
+        tentative_velocity_y[north_anchored_idx] = velocity_y[north_anchored_idx];
+        pressure[north_anchored_idx] = pressure[north_anchored_idx + instance->extents.x];
+    }
+
+    else if (idx.y == instance->extents.y - 1) {
+        const indexer_t south_anchored_idx = instance->extents.x * idx.y;
+        tentative_velocity_y[south_anchored_idx] = velocity_y[south_anchored_idx];
+        pressure[south_anchored_idx] = pressure[south_anchored_idx - instance->extents.x];
+    }
+}
+
+__global__ void instance_perform_sor_cycle(const instance *const instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x > instance->extents.x - 1 || idx.y > instance->extents.y - 1)
+        return;
+
+    const data * const data = &instance->device;
+    const indexer_t idx_central = idx.x + instance->extents.x * idx.y;
+
+    static constexpr compute_t omega = 1.7; // TODO move
+
+    const compute_t r_step_sq = 1.0 / (instance->resolution * instance->resolution);
+    compute_t weight;
+    compute_t x_spatial;
+    compute_t y_spatial;
+
+    if (data->flags[idx_central] & CELL_FLUID_ALL) {
+
+        weight = omega / (4 * r_step_sq);
+        x_spatial = (data->pressure[idx_central + 1] + data->pressure[idx_central - 1]) * r_step_sq;
+        y_spatial = (data->pressure[idx_central + instance->extents.x] +
+            data->pressure[idx_central - instance->extents.x]) * r_step_sq;
+
+    } else if (data->flags[idx_central] & CELL_FLUID) {
+
+        const compute_t epsilon_east = !!(data->flags[idx_central + 1] & CELL_FLUID);
+        const compute_t epsilon_west = !!(data->flags[idx_central - 1] & CELL_FLUID);
+        const compute_t epsilon_north = !!(data->flags[idx_central - instance->extents.x] & CELL_FLUID);
+        const compute_t epsilon_south = !!(data->flags[idx_central + instance->extents.x] & CELL_FLUID);
+
+        weight = omega / ((epsilon_east + epsilon_west) * r_step_sq + (epsilon_north + epsilon_south) *
+            r_step_sq);
+
+        x_spatial = (
+            data->pressure[idx_central + 1] * epsilon_west +
+            data->pressure[idx_central - 1] * epsilon_east) * r_step_sq;
+
+        y_spatial = (
+            data->pressure[idx_central + instance->extents.x] * epsilon_south +
+            data->pressure[idx_central - instance->extents.x] * epsilon_north) * r_step_sq;
+    } else
+        // Nothing to do for non-fluid cells.
+        return;
+
+    data->pressure[idx_central] = (1.0 - omega) * data->pressure[idx_central] + weight *
+        (x_spatial + y_spatial - data->poisson_source[idx_central]);
+}
+
+__global__ void instance_compute_local_residual(const instance *instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x > instance->extents.x - 1 || idx.y > instance->extents.y - 1)
+        return;
+
+    // TODO...
+}
+
+__global__ void instance_update_velocities(const instance *instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    if (idx.x > instance->extents.x - 1 || idx.y > instance->extents.y - 1)
+        return;
+
+    const compute_t x_pressure_diff_factor = instance->timestep_duration * instance->resolution;
+    const compute_t y_pressure_diff_factor = instance->timestep_duration * instance->resolution;
+
+    const data * const data = &instance->device;
+    const indexer_t idx_central = idx.x + instance->extents.x * idx.y;
+
+    if (data->flags[idx_central] & CELL_FLUID && data->flags[idx_central + 1] & CELL_FLUID) {
+
+        // TODO: might need to check the bounds here?
+
+        data->velocity_x[idx_central] = data->tentative_velocity_x[idx_central] -
+            (data->pressure[idx_central + 1] - data->pressure[idx_central]) * x_pressure_diff_factor;
+        data->velocity_y[idx_central] = data->tentative_velocity_y[idx_central] -
+            (data->pressure[idx_central + instance->extents.x] - data->pressure[idx_central]) * y_pressure_diff_factor;
+    }
 }
 
 __global__ void instance_set_boundaries(const instance *const instance)
