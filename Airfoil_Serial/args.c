@@ -12,7 +12,7 @@ int verbose = 0;
 int no_output = 0;
 int output_freq = 100;
 int enable_checkpoints = 0;
-int fixed_dt = 0;
+int fixed_dt = 1;
 
 static struct option long_options[] = {{"airfoil", required_argument, 0, 'a'}, {"del-t", required_argument, 0, 'd'},
         {"cellx", required_argument, 0, 'x'}, {"celly", required_argument, 0, 'y'}, {"freq", required_argument, 0, 'f'},

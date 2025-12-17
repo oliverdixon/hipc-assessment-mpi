@@ -17,10 +17,7 @@ int main()
         1
     };
 
-    safe_cuda(cudaDeviceSynchronize()); // Wait for airfoil body indices to be computed for each column.
     instance_set_boundaries<<<grid_size, block_size>>>(instance);
-
-    safe_cuda(cudaDeviceSynchronize()); // Wait for initial boundaries to be set.
     instance_set_neighbouring_flags<<<grid_size, block_size>>>(instance);
 
     static const compute_t max_simulation_runtime = 1.0;
@@ -31,22 +28,14 @@ int main()
     compute_t simulation_runtime = 0.0;
     indexer_t step_iteration = 0;
 
-    safe_cuda(cudaDeviceSynchronize()); // Wait for boundaries to be finalised.
     while (simulation_runtime < max_simulation_runtime) {
         instance_apply_boundary_conditions<<<grid_size, block_size>>>(instance);
+
         break; // TODO
     }
 
-    safe_cuda(cudaDeviceSynchronize()); // Wait for finalised data before transferring back to the host.
     instance_device_to_host(instance);
-
-    const cell_flags * const data = instance->host.flags;
-    for (indexer_t v_idx = 0; v_idx < instance->extents.y; ++v_idx) {
-        const std::size_t v_basis = instance->extents.x * v_idx;
-        for (indexer_t h_idx = 0; h_idx < instance->extents.x; ++h_idx)
-            printf("%02d ", data[v_basis + h_idx]);
-        putchar('\n');
-    }
+    instance_serialise(instance);
 
     instance_destroy(instance);
 

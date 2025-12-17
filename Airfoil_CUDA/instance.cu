@@ -19,32 +19,34 @@ instance *instance_create()
     instance->naca_specifier.maximum_camber = 2;
     instance->naca_specifier.edge_distance = 4;
     instance->naca_specifier.maximum_thickness = 12;
+    instance->timestep_duration = 0.003;
 
     data * const device = &instance->device;
 
     instance->extents.x = (indexer_t) ceil((compute_t) instance->resolution * instance->problem_size.x);
     instance->extents.y = (indexer_t) ceil((compute_t) instance->resolution * instance->problem_size.y);
 
-    const std::size_t compute_byte_count = sizeof(compute_t) * instance->extents.x * instance->extents.y;
+    const std::size_t allocation_extent = (instance->extents.x + 1) * (instance->extents.y + 1);
+    const std::size_t allocation_extent_bytes = sizeof(compute_t) * allocation_extent;
 
-    safe_cuda(cudaMalloc(&device->velocity_x, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->velocity_y, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->tentative_velocity_x, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->tentative_velocity_y, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->pressure, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->poisson_source, compute_byte_count));
-    safe_cuda(cudaMalloc(&device->flags, sizeof(cell_flags) * instance->extents.x * instance->extents.y));
+    safe_cuda(cudaMalloc(&device->velocity_x, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->velocity_y, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->tentative_velocity_x, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->tentative_velocity_y, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->pressure, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->poisson_source, allocation_extent_bytes));
+    safe_cuda(cudaMalloc(&device->flags, sizeof(cell_flags) * allocation_extent));
     safe_cuda(cudaMalloc(&instance->v_body_bounds, sizeof(iterator) * instance->extents.x));
 
     data * const host = &instance->host;
 
-    host->velocity_x = new compute_t[instance->extents.x * instance->extents.y];
-    host->velocity_y = new compute_t[instance->extents.x * instance->extents.y];
-    host->tentative_velocity_x = new compute_t[instance->extents.x * instance->extents.y];
-    host->tentative_velocity_y = new compute_t[instance->extents.x * instance->extents.y];
-    host->pressure = new compute_t[instance->extents.x * instance->extents.y];
-    host->poisson_source = new compute_t[instance->extents.x * instance->extents.y];
-    host->flags = new cell_flags[instance->extents.x * instance->extents.y];
+    host->velocity_x = new compute_t[allocation_extent];
+    host->velocity_y = new compute_t[allocation_extent];
+    host->tentative_velocity_x = new compute_t[allocation_extent];
+    host->tentative_velocity_y = new compute_t[allocation_extent];
+    host->pressure = new compute_t[allocation_extent];
+    host->poisson_source = new compute_t[allocation_extent];
+    host->flags = new cell_flags[allocation_extent];
 
     return instance;
 }
@@ -129,7 +131,7 @@ __global__ void instance_apply_boundary_conditions(const instance *const instanc
     if (idx.x >= instance->extents.x || idx.y >= instance->extents.y)
         return;
 
-    const std::size_t v_basis = instance->extents.x * idx.y;
+    const indexer_t v_basis = instance->extents.x * idx.y;
     const data * const data = &instance->device;
 
     if (idx.x == 0) {
@@ -153,25 +155,137 @@ __global__ void instance_set_neighbouring_flags(const instance *const instance)
     if (idx.x >= instance->extents.x || idx.y >= instance->extents.y)
         return;
 
-    const std::size_t v_basis = instance->extents.x * idx.y;
-    const std::size_t flat_idx = idx.x + v_basis;
+    const indexer_t v_basis = instance->extents.x * idx.y;
+    const indexer_t flat_idx = idx.x + v_basis;
     cell_flags * const flags = instance->device.flags;
 
-    /*
-     * None of the following reads can be out-of-bounds, as there is a buffer of boundary cells around the allocation.
-     * That is, any fluid cell will have, in the most extreme case (interior corners), one border cell in each
-     * direction.
-     */
     if (!(flags[flat_idx] & CELL_FLUID)) {
-        if (flags[flat_idx - 1] & CELL_FLUID)
+        if (idx.x > 0 && flags[flat_idx - 1] & CELL_FLUID)
             flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_WEST);
-        if (flags[flat_idx + 1] & CELL_FLUID)
+        if (idx.x < instance->extents.x - 1 && flags[flat_idx + 1] & CELL_FLUID)
             flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_EAST);
-        if (flags[flat_idx - instance->extents.x] & CELL_FLUID)
+        if (idx.y > 0 && flags[flat_idx - instance->extents.x] & CELL_FLUID)
             flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_SOUTH);
-        if (flags[flat_idx + instance->extents.x] & CELL_FLUID)
+        if (idx.y < instance->extents.y - 1 && flags[flat_idx + instance->extents.x] & CELL_FLUID)
             flags[flat_idx] = static_cast<cell_flags>(flags[flat_idx] | CELL_FLUID_NORTH);
     }
+}
+
+__global__ void instance_compute_tentative_velocities(const instance *instance)
+{
+    const dim2 idx = {
+        .x = blockIdx.x * blockDim.x + threadIdx.x,
+        .y = blockIdx.y * blockDim.y + threadIdx.y
+    };
+
+    // TODO maybe this condition is too restrictive.
+    if (idx.x < 1 || idx.x >= instance->extents.x - 1 || idx.y < 1 || idx.y >= instance->extents.y)
+        return;
+    
+    static constexpr compute_t reynolds = 500.0;
+    static constexpr double gamma = 0.9; // Upwind differencing factor in PDE discretisation
+    
+    const data * const data = &instance->device;
+    const compute_t * const velocity_x = data->velocity_x;
+    const compute_t * const velocity_y = data->velocity_y;
+    const cell_flags * const flags = data->flags;
+    
+    const indexer_t idx_central = idx.x + instance->extents.x * idx.y;
+
+    const indexer_t idx_north = idx.x + instance->extents.x * (idx.y - 1);
+    const indexer_t idx_south = idx.x + instance->extents.x * (idx.y + 1);
+    const indexer_t idx_west = idx.x - 1 + instance->extents.x * idx.y;
+    const indexer_t idx_east = idx.x + 1 + instance->extents.x * idx.y;
+
+    const indexer_t idx_northeast = idx.x + 1 + instance->extents.x * (idx.y - 1);
+    const indexer_t idx_southwest = idx.x - 1 + instance->extents.x * (idx.y + 1);
+
+    const compute_t quarter_resolution = instance->resolution / 4.0;
+    const compute_t sq_resolution = instance->resolution * instance->resolution;
+
+    // TODO: check this. Why only checking east when else comment indicates "adjacent cells"?
+    if (flags[idx_central] & CELL_FLUID && flags[idx_east] & CELL_FLUID) {
+        const double self_advection_x =
+            (
+                (velocity_x[idx_central] + velocity_x[idx_east]) *
+                (velocity_x[idx_central] + velocity_x[idx_east]) +
+                gamma * fabs(velocity_x[idx_central] + velocity_x[idx_east]) *
+                (velocity_x[idx_central] - velocity_x[idx_east]) -
+                (velocity_x[idx_west] + velocity_x[idx_central]) *
+                (velocity_x[idx_west] + velocity_x[idx_central]) -
+                gamma * fabs(velocity_x[idx_west] + velocity_x[idx_central]) *
+                (velocity_x[idx_west] - velocity_x[idx_central])
+            ) * quarter_resolution;
+
+        const double cross_advection_y =
+            (
+                (velocity_y[idx_central] + velocity_y[idx_east]) *
+                (velocity_x[idx_central] + velocity_x[idx_south]) +
+                gamma * fabs(velocity_y[idx_central] + velocity_y[idx_east]) *
+                (velocity_x[idx_central] - velocity_x[idx_south]) -
+                (velocity_y[idx_north] + velocity_y[idx_northeast]) *
+                (velocity_x[idx_north] + velocity_x[idx_central]) -
+                gamma * fabs(velocity_y[idx_north] + velocity_y[idx_northeast]) *
+                (velocity_x[idx_north] - velocity_x[idx_central])
+            ) * quarter_resolution;
+
+        const double diffusion =
+            (
+                velocity_x[idx_east] -
+                2.0 * velocity_x[idx_central] +
+                velocity_x[idx_west] +
+                velocity_x[idx_south] -
+                2.0 * velocity_x[idx_central] +
+                velocity_x[idx_north]
+            ) * sq_resolution;
+
+        data->tentative_velocity_x[idx_central] = velocity_x[idx_central] + instance->timestep_duration *
+            (diffusion / reynolds - self_advection_x - cross_advection_y);
+    } else
+        // If both adjacent cells are not fluids, the velocity is unchanged.
+        data->tentative_velocity_x[idx_central] = velocity_x[idx_central];
+
+    if (flags[idx_central] & CELL_FLUID && flags[idx_south] & CELL_FLUID) {
+        const double cross_advection_x =
+            (
+                (velocity_x[idx_central] + velocity_x[idx_south]) *
+                (velocity_y[idx_central] + velocity_y[idx_east]) +
+                gamma * fabs(velocity_x[idx_central] + velocity_x[idx_south]) *
+                (velocity_y[idx_central] - velocity_y[idx_east]) -
+                (velocity_x[idx_west] + velocity_x[idx_southwest]) *
+                (velocity_y[idx_west] + velocity_y[idx_central]) -
+                gamma * fabs(velocity_x[idx_west] + velocity_x[idx_southwest]) *
+                (velocity_y[idx_west] - velocity_y[idx_central])
+            ) * quarter_resolution;
+
+        const double self_advection_y =
+            (
+                (velocity_y[idx_central] + velocity_y[idx_south]) *
+                (velocity_y[idx_central] + velocity_y[idx_south]) +
+                gamma * fabs(velocity_y[idx_central] + velocity_y[idx_south]) *
+                (velocity_y[idx_central] - velocity_y[idx_south]) -
+                (velocity_y[idx_north] + velocity_y[idx_central]) *
+                (velocity_y[idx_north] + velocity_y[idx_central]) -
+                gamma * fabs(velocity_y[idx_north] + velocity_y[idx_central]) *
+                (velocity_y[idx_north] - velocity_y[idx_central])
+            ) * quarter_resolution;
+
+        const double diffusion =
+            (
+                velocity_y[idx_east] -
+                2.0 * velocity_y[idx_central] +
+                velocity_y[idx_west] +
+                velocity_y[idx_south] -
+                2.0 * velocity_y[idx_central] +
+                velocity_y[idx_north]
+            ) * sq_resolution;
+
+        data->tentative_velocity_y[idx_central] = velocity_y[idx_central] + instance->timestep_duration *
+            (diffusion / reynolds - cross_advection_x - self_advection_y);
+
+    } else
+        // If both adjacent cells are not fluids, the velocity is unchanged.
+        data->tentative_velocity_y[idx_central] = velocity_y[idx_central];
 }
 
 __global__ void instance_set_boundaries(const instance *const instance)
@@ -213,4 +327,81 @@ void instance_device_to_host(const instance *instance)
     safe_cuda(cudaMemcpy(dst->pressure, src->pressure, compute_byte_count, mode));
     safe_cuda(cudaMemcpy(dst->poisson_source, src->poisson_source, compute_byte_count, mode));
     safe_cuda(cudaMemcpy(dst->flags, src->flags, flags_byte_count, mode));
+}
+
+void instance_serialise(const instance *instance)
+{
+    FILE * const destination = fopen("out/flows.vtr", "w");
+
+    const indexer_t h_pixel_count = static_cast<unsigned int>(instance->problem_size.x) * instance->resolution;
+    const indexer_t v_pixel_count = static_cast<unsigned int>(instance->problem_size.y) * instance->resolution;
+
+    assert(h_pixel_count == instance->extents.x);
+    assert(v_pixel_count == instance->extents.y);
+
+    fprintf(destination,
+        "<?xml version=\"1.0\"?>\n"
+        "<VTKFile type=\"RectilinearGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
+        "\t<RectilinearGrid WholeExtent=\"0 %u 0 %u 0 0\" GhostLevel=\"0\">\n"
+        "\t\t<Piece Extent=\"0 %u 0 %u 0 0\">\n"
+        "\t\t\t<Coordinates>\n"
+        "\t\t\t\t<DataArray type=\"Float64\" name=\"X\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n",
+
+        h_pixel_count, v_pixel_count, h_pixel_count, v_pixel_count, instance->problem_size.x);
+
+    // Write out physical positions of X co-ordinates.
+    for (indexer_t h_idx = 0; h_idx <= h_pixel_count; ++h_idx)
+        fprintf(destination, "%lf ", static_cast<compute_t>(h_idx) / instance->resolution);
+
+    fprintf(destination,
+        "\n\t\t\t\t</DataArray>\n"
+        "\t\t\t\t<DataArray type=\"Float64\" name=\"Y\" format=\"ascii\" RangeMin=\"0\" RangeMax=\"%lf\">\n",
+        instance->problem_size.y);
+
+    // Write out physical positions of Y co-ordinates.
+    for (indexer_t v_idx = 0; v_idx <= v_pixel_count; ++v_idx)
+        fprintf(destination, "%lf ", static_cast<compute_t>(v_idx) / instance->resolution);
+
+    // Write out velocity vectors.
+    fprintf(destination,
+        "\n\t\t\t\t</DataArray>\n"
+        "\t\t\t\t<DataArray type=\"Float64\" name=\"Y\" format=\"ascii\">\n"
+        "0.0\n"
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</Coordinates>\n"
+        "\t\t\t<PointData Vectors=\"uv\">\n"
+        "\t\t\t\t<DataArray type=\"Float64\" Name=\"uv\" NumberOfComponents=\"3\" format=\"ascii\">\n");
+
+    for (indexer_t v_idx = 0; v_idx <= v_pixel_count; ++v_idx) {
+        const indexer_t v_basis = v_idx * instance->extents.x;
+        for (indexer_t h_idx = 0; h_idx <= h_pixel_count; ++h_idx)
+            fprintf(destination, "%lf %lf 0\n",
+                instance->host.velocity_x[v_basis + h_idx],
+                instance->host.velocity_y[v_basis + h_idx]);
+    }
+
+    // Write out pressure scalars.
+    fputs(
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</PointData>\n"
+        "\t\t\t<CellData Scalars=\"p\">\n"
+        "\t\t\t\t<DataArray type=\"Float64\" format=\"ascii\" Name=\"p\">\n",
+        destination);
+
+    for (indexer_t v_idx = 0; v_idx < v_pixel_count; ++v_idx) {
+        const indexer_t v_basis = v_idx * instance->extents.x;
+        for (indexer_t h_idx = 0; h_idx < h_pixel_count; ++h_idx)
+            fprintf(destination, "%lf ", instance->host.pressure[v_basis + h_idx]);
+        fputc('\n', destination);
+    }
+
+    fputs(
+        "\t\t\t\t</DataArray>\n"
+        "\t\t\t</CellData>\n"
+        "\t\t</Piece>\n"
+        "\t</RectilinearGrid>\n"
+        "</VTKFile>\n",
+        destination);
+
+    fclose(destination);
 }

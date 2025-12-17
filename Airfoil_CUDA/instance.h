@@ -50,6 +50,7 @@ struct instance
 
     naca_specifier naca_specifier;
     compute_dim2 problem_size;
+    compute_t timestep_duration;
 
     compute_t initial_velocity_x;
     compute_t initial_velocity_y;
@@ -74,6 +75,10 @@ __global__ void instance_apply_boundary_conditions(const instance * instance);
 
 __global__ void instance_set_neighbouring_flags(const instance * instance);
 
+__global__ void instance_compute_tentative_velocities(const instance * instance);
+
 void instance_device_to_host(const instance *instance);
+
+void instance_serialise(const instance* instance);
 
 #endif // HIPC_ASSESSMENT_INSTANCE_H
