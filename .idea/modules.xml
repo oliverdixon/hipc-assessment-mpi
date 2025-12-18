@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/HIPC_Assessment.iml" filepath="$PROJECT_DIR$/.idea/HIPC_Assessment.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/HIPC_Assessment_MPI.iml" filepath="$PROJECT_DIR$/.idea/HIPC_Assessment_MPI.iml" />
     </modules>
   </component>
 </project>

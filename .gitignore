@@ -1,12 +1,6 @@
 /cmake-build-*
-**/out
-Airfoil_Original
-Airfoil_MPI/tmpi
-Airfoil_MPI/valgrind.supp
-/griebel.pdf
+/out
+/Source/valgrind.supp
 
 .idea/runConfigurations
 .idea/cmake.xml
-
-# Intel Advisor Projects
-Airfoil_MPI/airfoil_mpi

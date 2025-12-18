@@ -3,9 +3,9 @@
   "configurePresets": [
     {
       "name": "viking",
-      "cacheVariables": {
-        "BUILD_AIRFOIL_CUDA": true,
-        "CMAKE_CUDA_ARCHITECTURES": "native"
+      "environment": {
+        "CC": "mpiicx",
+        "CXX": "mpiicpx"
       }
     },
     {

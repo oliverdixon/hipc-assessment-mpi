@@ -2,8 +2,9 @@
 <project version="4">
   <component name="CMakeSharedSettings">
     <configurations>
-      <configuration PROFILE_NAME="Debug" ENABLED="true" CONFIG_NAME="Debug" TOOLCHAIN_NAME="Default" NO_GENERATOR="true" />
-      <configuration PROFILE_NAME="Release" ENABLED="true" CONFIG_NAME="Release" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="RelWithDebInfo-Viking" ENABLED="true" CONFIG_NAME="RelWithDebInfo" TOOLCHAIN_NAME="Viking Tunnel" GENERATION_OPTIONS="--preset viking" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="Debug" ENABLED="false" CONFIG_NAME="Debug" TOOLCHAIN_NAME="Default" NO_GENERATOR="true" />
+      <configuration PROFILE_NAME="Release" ENABLED="false" CONFIG_NAME="Release" NO_GENERATOR="true" />
       <configuration PROFILE_NAME="Debug-Viking" ENABLED="true" CONFIG_NAME="Debug" TOOLCHAIN_NAME="Viking Tunnel" GENERATION_OPTIONS="--preset viking" NO_GENERATOR="true" />
       <configuration PROFILE_NAME="Release-Viking" ENABLED="true" CONFIG_NAME="Release" TOOLCHAIN_NAME="Viking Tunnel" GENERATION_OPTIONS="--preset viking" NO_GENERATOR="true" />
     </configurations>

@@ -14,6 +14,9 @@
 #include "instance.h"
 #include "region.h"
 
+// ReSharper disable CppDFAConstantParameter
+// ReSharper disable CppDFAConstantConditions
+// ReSharper disable CppDFAUnreachableCode
 static void debug_print(
     compute_t * const * const array,
     const struct iterator h_bounds,
@@ -82,6 +85,9 @@ static void debug_print(
         fputc('\n', destination);
     }
 }
+// ReSharper restore CppDFAUnreachableCode
+// ReSharper restore CppDFAConstantConditions
+// ReSharper restore CppDFAConstantParameter
 
 static void serialise(const struct instance * const instance, const struct region * const region)
 {
@@ -168,6 +174,7 @@ int main(int argc, char **argv)
         simulation_runtime += instance.timestep_duration;
 
         if (instance.rank == 0 && step_iteration % output_freq == 0)
+            // TODO: printing multiple times?
             printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime, residual);
 
         ++step_iteration;
