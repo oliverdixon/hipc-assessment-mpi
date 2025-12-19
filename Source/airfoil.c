@@ -174,7 +174,6 @@ int main(int argc, char **argv)
         simulation_runtime += instance.timestep_duration;
 
         if (instance.rank == 0 && step_iteration % output_freq == 0)
-            // TODO: printing multiple times?
             printf("Step %8d, Time: %14.8e, Residual: %14.8e\n", step_iteration, simulation_runtime, residual);
 
         ++step_iteration;

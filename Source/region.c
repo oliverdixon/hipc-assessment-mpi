@@ -673,7 +673,7 @@ void region_apply_boundary_conditions(const struct region *const region)
      */
     for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
         for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
-            if (flags[h_idx][v_idx] & CELL_FLUID_ALL)
+            if (!(flags[h_idx][v_idx] & CELL_FLUID))
                 switch (flags[h_idx][v_idx]) {
                 case CELL_FLUID_NORTH:
                     velocity_y[h_idx][v_idx] = 0.0;
@@ -950,7 +950,7 @@ void region_exchange(
     }
 
     // Ensure that we have selected a valid matrix.
-    assert(exchanger != NULL && row_t != NULL && col_t != NULL);
+    assert(exchanger != NULL);
 
     MPI_Request requests[8];
     int request_idx = 0;
@@ -1128,7 +1128,7 @@ void region_serialise_vtk(
     // Write out pressure scalars.
     for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end - 1; ++v_idx) {
         for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end - 1; ++h_idx)
-            fprintf(destination, "%lf  ", region->pressure[h_idx][v_idx]);
+            fprintf(destination, "%lf  ", region->poisson_source[h_idx][v_idx]);
         fputc('\n', destination);
     }
 
