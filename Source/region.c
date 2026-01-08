@@ -8,7 +8,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <strings.h>
-#include <omp.h>
 
 #include "instance.h"
 #include "region.h"
@@ -602,6 +601,7 @@ void region_destroy(struct region *const region)
     free_2d_array((void **) region->tentative_velocity_x);
     free_2d_array((void **) region->tentative_velocity_y);
     free_2d_array((void **) region->pressure);
+    free_2d_array((void **) region->poisson_source);
     free_2d_array((void **) region->flags);
 }
 
