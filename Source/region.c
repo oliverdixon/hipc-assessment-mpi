@@ -1052,9 +1052,9 @@ void region_initialise(struct region *const region, const struct instance *const
                     flags[h_idx][v_idx] |= CELL_FLUID_WEST;
                 if (flags[h_idx + 1][v_idx] & CELL_FLUID)
                     flags[h_idx][v_idx] |= CELL_FLUID_EAST;
-                if (flags[h_idx][v_idx + 1] & CELL_FLUID)
-                    flags[h_idx][v_idx] |= CELL_FLUID_SOUTH;
                 if (flags[h_idx][v_idx - 1] & CELL_FLUID)
+                    flags[h_idx][v_idx] |= CELL_FLUID_SOUTH;
+                if (flags[h_idx][v_idx + 1] & CELL_FLUID)
                     flags[h_idx][v_idx] |= CELL_FLUID_NORTH;
             }
 }
@@ -1128,7 +1128,7 @@ void region_serialise_vtk(
     // Write out pressure scalars.
     for (indexer_t v_idx = region->v_exterior.begin; v_idx < region->v_exterior.end - 1; ++v_idx) {
         for (indexer_t h_idx = region->h_exterior.begin; h_idx < region->h_exterior.end - 1; ++h_idx)
-            fprintf(destination, "%lf  ", region->poisson_source[h_idx][v_idx]); // TODO: pressure
+            fprintf(destination, "%lf  ", region->pressure[h_idx][v_idx]);
         fputc('\n', destination);
     }
 
