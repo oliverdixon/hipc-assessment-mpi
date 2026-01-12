@@ -19,7 +19,7 @@ static void serialise(const struct instance * const instance, const struct regio
     assert(instance->count < (int) powf(10, max_rank_digits));
 
     static const char prefix[] = "flows";
-    static const char suffix[] = "_00.vtr"; // TODO: time checkpoints indicated by suffix.
+    static const char suffix[] = ".vtr";
 
     chdir("./out/");
 
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
     region_initialise(&region, &instance);
     region_exchange(&region, MATRIX_FLAGS, &instance);
 
-    static const compute_t max_simulation_runtime = 1.0;
+    static const compute_t max_simulation_runtime = 2.0;
     static const indexer_t sor_max_iterations = 100;
     static const compute_t sor_residual_epsilon = 0.001;
     static const indexer_t output_freq = 100;
@@ -65,9 +65,10 @@ int main(int argc, char **argv)
     MPI_Allreduce(&region.fluid_cell_count, &fluid_cell_sum, 1, MPI_UNSIGNED, MPI_SUM, instance.cartesian_comm);
 
     while (simulation_runtime < max_simulation_runtime) {
-        // \Delta_t timestep is fixed.
+        region_update_timestep_interval(&region, &instance);
         region_apply_boundary_conditions(&region);
-        // TODO: possibly need HX of velocities here? Since they can be changed following the boundary conditions.
+        region_exchange(&region, MATRIX_VELOCITY_X, &instance);
+        region_exchange(&region, MATRIX_VELOCITY_Y, &instance);
         region_compute_tentative_velocities(&region, &instance);
 
         // Exchange tentative velocities for computation of Poisson term.

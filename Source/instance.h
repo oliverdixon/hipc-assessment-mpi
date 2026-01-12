@@ -30,7 +30,7 @@ struct instance
     const struct dim2 cartesian_pos;
     const struct compute_dim2 problem_size;
 
-    const compute_t timestep_duration;
+    compute_t timestep_duration;
     const compute_t sor_omega;
     const struct naca_specifier naca_specifier;
     MPI_Datatype dim2_t;

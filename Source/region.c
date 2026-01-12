@@ -479,7 +479,7 @@ static void sor_cycle_phase(const struct region *const region, const compute_t o
 struct region region_create(const struct instance *const instance)
 {
     // Number of cells per unit-distance.
-    static const unsigned int resolution = 128;
+    static const unsigned int resolution = 256;
 
     // Scaled spatial dimensions by the resolution, to map problem size to problem cell counts.
     const struct dim2 global_cell_counts = {
@@ -727,7 +727,6 @@ void region_apply_boundary_conditions(const struct region *const region)
          * If we're on a western boundary, fix the western-edge velocities such that there is a continual flow of fluid
          * into the simulation space.
          */
-        // TODO: is this first assignment needed?
         velocity_y[region->h_exterior.begin][region->v_exterior.begin] =
                 2 * region->initial_velocity_y - velocity_y[region->h_exterior.begin + 1][region->v_exterior.begin];
 
@@ -775,6 +774,43 @@ void region_update_velocities(const struct region *const region, const struct in
             if (region->flags[h_idx][v_idx] & CELL_FLUID && region->flags[h_idx][v_idx + 1] & CELL_FLUID)
                 region->velocity_y[h_idx][v_idx] = region->tentative_velocity_y[h_idx][v_idx] -
                     (region->pressure[h_idx][v_idx + 1] - region->pressure[h_idx][v_idx]) * y_pressure_diff_factor;
+}
+
+void region_update_timestep_interval(const struct region * const region, struct instance * const instance)
+{
+    compute_t x_max = -INFINITY;
+    compute_t y_max = -INFINITY;
+
+    compute_t * const * const velocity_x = region->velocity_x;
+    compute_t * const * const velocity_y = region->velocity_y;
+
+    // Maximise our local X velocity
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+            x_max = fmax(fabs(velocity_x[h_idx][v_idx]), x_max);
+
+    compute_t x_global_max = INT_MIN;
+    compute_t y_global_max = INT_MIN;
+    MPI_Request reduce_reqs[2];
+
+    // Reduce to the global maximum X velocity
+    MPI_Iallreduce(&x_max, &x_global_max, 1, MPI_COMPUTE, MPI_MAX, instance->cartesian_comm, &reduce_reqs[0]);
+
+    // Maximise our local Y velocity
+    for (indexer_t h_idx = region->h_interior.begin; h_idx < region->h_interior.end; ++h_idx)
+        for (indexer_t v_idx = region->v_interior.begin; v_idx < region->v_interior.end; ++v_idx)
+            y_max = fmax(fabs(velocity_y[h_idx][v_idx]), y_max);
+
+    // Reduce to the global maximum Y velocity
+    MPI_Iallreduce(&y_max, &y_global_max, 1, MPI_COMPUTE, MPI_MAX, instance->cartesian_comm, &reduce_reqs[1]);
+    MPI_Waitall(sizeof(reduce_reqs) / sizeof(*reduce_reqs), reduce_reqs, MPI_STATUSES_IGNORE);
+
+    const compute_t grid_spacing = 1.0 / region->resolution;
+    const compute_t cfl_limit = fmin(grid_spacing / x_global_max, grid_spacing / y_global_max);
+    const compute_t reynolds_delta = 1.0 / (1.0 / (grid_spacing * grid_spacing) +
+        1 / (grid_spacing * grid_spacing)) * 500 / 2.0;
+
+    instance->timestep_duration = 0.5 * fmin(cfl_limit, reynolds_delta);
 }
 
 void region_compute_tentative_velocities(const struct region *const region, const struct instance *instance)
