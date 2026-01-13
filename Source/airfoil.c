@@ -8,36 +8,9 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #include "instance.h"
 #include "region.h"
-
-static void serialise(const struct instance * const instance, const struct region * const region)
-{
-    static const unsigned int max_rank_digits = 2;
-    assert(instance->count < (int) powf(10, max_rank_digits));
-
-    static const char prefix[] = "flows";
-    static const char suffix[] = ".vtr";
-
-    chdir("./out/");
-
-    FILE * const master_fp = instance->rank == 0 ? fopen("flows.pvtr", "w") : NULL;
-    instance_serialise_vtk(instance, region, max_rank_digits, prefix, suffix, master_fp);
-
-    if (master_fp != NULL)
-        fclose(master_fp);
-
-    static unsigned int prefix_length = sizeof(prefix) / sizeof(*prefix) - 1;
-    static unsigned int suffix_length = sizeof(suffix) / sizeof(*suffix) - 1;
-
-    char subfile_name[prefix_length + max_rank_digits + suffix_length + 1];
-    sprintf(subfile_name, "%s%0*d%s", prefix, max_rank_digits, instance->rank, suffix);
-    FILE * const subfile_fp = fopen(subfile_name, "w");
-    region_serialise_vtk(region, instance, subfile_fp);
-    fclose(subfile_fp);
-}
 
 int main(int argc, char **argv)
 {
@@ -103,8 +76,6 @@ int main(int argc, char **argv)
 
         ++step_iteration;
     }
-
-    serialise(&instance, &region);
 
     region_destroy(&region);
     instance_destroy(&instance);
